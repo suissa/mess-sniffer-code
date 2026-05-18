@@ -5808,16 +5808,6 @@
       ],
       "description": "Singleton discriminant for [`SuppressLineAction`]."
     },
-    "SuppressAutoFixable": {
-      "oneOf": [
-        {
-          "type": "string",
-          "const": "false",
-          "description": "Always false for suppress actions."
-        }
-      ],
-      "description": "`auto_fixable` field on suppress actions: always literally `false` per the\npublic contract, but typed as a singleton enum so the derived schema\nrenders it as `\"const\": false` rather than the generic `boolean`."
-    },
     "SuppressLineScope": {
       "oneOf": [
         {

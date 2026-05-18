@@ -757,8 +757,8 @@ fn merge_with_committed(derived: &Map<String, Value>) -> Result<Value, String> {
 
     // Schemars produces transitively-referenced helper definitions for every
     // typed enum / payload subtype on the in-scope structs (`FixActionType`,
-    // `SuppressAutoFixable`, the kebab-case kind enums, `DependencyLocation`,
-    // `MemberKind`, `CoverageSetupFramework`, etc.). After Phase 8 every
+    // the kebab-case kind enums, `DependencyLocation`, `MemberKind`,
+    // `CoverageSetupFramework`, etc.). After Phase 8 every
     // helper that appears in `docs/output-schema.json` is a derived artifact,
     // so always overwrite the committed entry rather than preserving it. The
     // previous "skip if already present" guard silently froze the helper
@@ -1543,15 +1543,6 @@ mod drift_tests {
             (
                 "CoverageAnalyzeOutput",
                 "retired by #384 item 3 (typed envelope builders)",
-            ),
-            // Schemars-emitted singleton helper that `merge_with_committed`
-            // copies into the committed schema even though no in-scope type
-            // currently references it via `$ref`. Pending #384 item 1 follow-up
-            // (drop the helper from schemars output once the suppress-action
-            // `auto_fixable: bool` field stops emitting a separate named type).
-            (
-                "SuppressAutoFixable",
-                "retired by #384 item 1 follow-up (schemars singleton cleanup)",
             ),
         ];
         let allow_list: rustc_hash::FxHashSet<&'static str> = HAND_MAINTAINED_ALLOW_LIST
