@@ -98,14 +98,36 @@ struct Cli {
     changed_since: Option<String>,
 
     /// Path to a unified diff (e.g. `git diff --unified=0 main...HEAD`) used
-    /// for line-level scoping of the `hot-path-touched` runtime-coverage
-    /// verdict. When supplied, a hot function is only flagged if a line in
-    /// `[start_line, end_line]` was modified, instead of the file-level
-    /// match `--changed-since` produces. Falls back to `FALLOW_DIFF_FILE`
-    /// when the flag is omitted, so CI scripts that already export the env
-    /// var keep working unchanged.
+    /// for line-level scoping of every finding. When supplied, only findings
+    /// whose source line falls inside an added hunk for that file are
+    /// reported; project-level findings (unused deps, catalog entries,
+    /// dependency overrides) bypass the filter because they anchor at fixed
+    /// `package.json` / `pnpm-workspace.yaml` lines a PR rarely touches.
+    /// Pass `-` to read the diff from stdin (e.g. `gh pr diff | fallow
+    /// audit --diff-file -`); `--diff-stdin` is a verbose alias for the same
+    /// behavior. Falls back to `FALLOW_DIFF_FILE` when the flag is omitted,
+    /// so CI scripts that already export the env var keep working
+    /// unchanged. When both `--diff-file` and `--changed-since` are set,
+    /// the diff filter wins for line-level filtering and `--changed-since`
+    /// still governs file discovery; fallow logs a one-line stderr note so
+    /// the precedence is visible in CI logs.
+    ///
+    /// Examples:
+    ///
+    ///   fallow audit --diff-file pr.diff
+    ///
+    ///   gh pr diff | fallow audit --diff-file -
+    ///
+    ///   git diff main...HEAD | fallow check --diff-stdin
     #[arg(long = "diff-file", value_name = "PATH", global = true)]
     diff_file: Option<PathBuf>,
+
+    /// Read the unified diff from stdin instead of a file. Equivalent to
+    /// `--diff-file -`. Mutually exclusive with a non-stdin `--diff-file`
+    /// value; fails fast if both forms are supplied. Useful for piping
+    /// `gh pr diff` or `git diff` directly into fallow without a tempfile.
+    #[arg(long = "diff-stdin", global = true)]
+    diff_stdin: bool,
 
     /// Compare against a previously saved baseline file
     #[arg(long, global = true)]
@@ -1877,6 +1899,47 @@ fn main() -> ExitCode {
         cli_format_was_explicit,
     } = fmt;
 
+    // Resolve `--diff-file` / `--diff-stdin` / `$FALLOW_DIFF_FILE` into a
+    // single `DiffSource`, then load + parse it once for the lifetime of
+    // the process so combined runs (`fallow` with no subcommand) do not
+    // re-read stdin or re-parse the same file three times across check,
+    // dupes, and health. The result populates `diff_filter::SHARED_DIFF`,
+    // which every finding-level filter queries at filter time.
+    //
+    // Precedence: when both `--diff-file` (or the env-var equivalent) and
+    // `--changed-since` are set, the diff filter wins for line-level
+    // filtering and `--changed-since` still governs file discovery. Log
+    // the precedence so it is visible in CI logs without breaking the
+    // existing GitHub Action / GitLab CI scripts that set both today.
+    let diff_source = match report::ci::diff_filter::resolve_diff_source(
+        cli.diff_file.as_deref(),
+        cli.diff_stdin,
+        &root,
+    ) {
+        Ok(src) => src,
+        Err(msg) => return emit_error(&msg, 2, output),
+    };
+    if diff_source.is_some() && cli.changed_since.is_some() && !quiet {
+        eprintln!(
+            "fallow: --diff-file precedes --changed-since for line-level \
+             filtering; --changed-since still scopes file discovery. Drop \
+             one of them to disable this combination."
+        );
+    }
+    // The empty-parse warning inside `init_shared_diff` is gated on `quiet`,
+    // but a misconfigured `--diff-file` (typo, wrong path, non-unified file)
+    // silently produces a zero-finding run that looks identical to a clean
+    // pass. Always pass `false` for the quiet gate when the source is
+    // explicitly set so CI users see the warning even with `--quiet`/`--ci`;
+    // env-var fallback paths respect the user's quiet preference so a
+    // `FALLOW_DIFF_FILE` set elsewhere does not spam logs.
+    let suppress_warnings = quiet
+        && matches!(
+            diff_source,
+            Some(report::ci::diff_filter::DiffSource::EnvVar(_)) | None
+        );
+    let _ = report::ci::diff_filter::init_shared_diff(diff_source.as_ref(), suppress_warnings);
+
     // Validate --ci/--fail-on-issues/--sarif-file are not used with irrelevant commands
     if (cli.ci || cli.fail_on_issues || cli.sarif_file.is_some())
         && matches!(
@@ -1983,7 +2046,6 @@ fn dispatch_bare_command(dispatch: &DispatchContext<'_>) -> ExitCode {
         fail_on_issues,
         sarif_file: cli.sarif_file.as_deref(),
         changed_since: cli.changed_since.as_deref(),
-        diff_file: cli.diff_file.as_deref(),
         baseline: cli.baseline.as_deref(),
         save_baseline: cli.save_baseline.as_deref(),
         production: cli.production,
@@ -2376,7 +2438,6 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
                 include_entry_exports: cli.include_entry_exports,
                 runtime_coverage: runtime_coverage.as_deref(),
                 min_invocations_hot,
-                diff_file: cli.diff_file.as_deref(),
             })
         }
         Command::Schema => unreachable!("handled above"),
@@ -2909,7 +2970,6 @@ fn dispatch_health(dispatch: &DispatchContext<'_>, args: HealthDispatchArgs<'_>)
         coverage_root,
         performance: cli.performance,
         runtime_coverage,
-        diff_file: cli.diff_file.as_deref(),
     })
 }
 
