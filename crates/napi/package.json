@@ -1,7 +1,7 @@
 {
   "name": "@fallow-cli/fallow-node",
   "version": "2.76.0",
-  "description": "Native Node.js bindings for fallow dead-code, duplication, and health analyses.",
+  "description": "Native Node.js bindings for fallow, codebase intelligence for TypeScript and JavaScript. Finds unused code, duplication, circular dependencies, complexity hotspots, and architecture drift. Optional runtime intelligence layer (Fallow Runtime) adds production execution evidence.",
   "main": "index.js",
   "types": "index.d.ts",
   "exports": {
