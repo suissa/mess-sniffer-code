@@ -3,7 +3,9 @@ use rmcp::model::*;
 #[cfg(unix)]
 use std::time::Duration;
 
-use crate::tools::{run_fallow, run_fallow_with_timeout, run_fallow_with_top_level_warnings};
+use crate::tools::run_fallow;
+#[cfg(unix)]
+use crate::tools::{run_fallow_with_timeout, run_fallow_with_top_level_warnings};
 
 use super::super::resolve_binary;
 
