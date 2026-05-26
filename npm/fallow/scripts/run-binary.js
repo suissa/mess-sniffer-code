@@ -85,7 +85,25 @@ function writeVerifiedLineIfVersionQuery(verifyResult) {
   }
 }
 
+// Swallow EPIPE on stdout. When fallow's output is piped into a reader that
+// closes early (e.g. `fallow --version | head`), the trailing `verified:`
+// status line would otherwise surface as an unhandled EPIPE 'error' event and
+// dump a Node stack trace. EPIPE arrives as an async 'error' event on the
+// stdout stream, not as a throw, so a try/catch around the write cannot catch
+// it. The child binary's primary output is already written via inherited
+// stdio; the status line is best-effort, so exit cleanly once the reader is
+// gone. Scoped to stdout so a genuine error write to stderr still sets exit 1.
+function guardBrokenStdout() {
+  process.stdout.on("error", (err) => {
+    if (err && err.code === "EPIPE") {
+      process.exit(0);
+    }
+    throw err;
+  });
+}
+
 function runBinary(binaryBaseName) {
+  guardBrokenStdout();
   const { pkg, manifestPath, platformPkgDir } = resolvePlatformPaths();
 
   const binaryName = process.platform === "win32" ? `${binaryBaseName}.exe` : binaryBaseName;
@@ -119,4 +137,5 @@ module.exports = {
   runBinary,
   describeVerified, // test-only
   isVersionQuery, // test-only
+  guardBrokenStdout, // test-only
 };

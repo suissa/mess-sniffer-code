@@ -1,0 +1,39 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
+const path = require("node:path");
+
+const RUN_BINARY = path.join(__dirname, "run-binary.js");
+
+// Run a child that installs guardBrokenStdout, then emits a synthetic stdout
+// 'error' with the given code. Node delivers a broken-pipe failure as exactly
+// this event ("Emitted 'error' event on Socket instance"), so emitting it is a
+// faithful reproduction of `fallow --version | head` without needing a live
+// pipe or an installed @fallow-cli platform package. Requiring run-binary.js
+// has no side effects beyond defining functions, so no binary is resolved.
+function runGuardChild(errorCode) {
+  const script =
+    `const { guardBrokenStdout } = require(${JSON.stringify(RUN_BINARY)});` +
+    `guardBrokenStdout();` +
+    `process.stdout.emit("error", Object.assign(new Error("write ${errorCode}"), { code: "${errorCode}" }));` +
+    // Reached only if the guard neither exited (EPIPE) nor rethrew (other).
+    `process.exit(42);`;
+  return spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+}
+
+test("guardBrokenStdout swallows EPIPE on stdout and exits 0", () => {
+  const res = runGuardChild("EPIPE");
+  assert.equal(res.status, 0, "EPIPE on stdout should exit 0 cleanly, not crash");
+  assert.doesNotMatch(res.stderr, /EPIPE/, "no EPIPE stack trace on stderr");
+});
+
+test("guardBrokenStdout rethrows non-EPIPE stdout errors (exit 1)", () => {
+  const res = runGuardChild("ENOSPC");
+  assert.equal(res.status, 1, "a non-EPIPE stdout error must surface, not be swallowed");
+  // Match the thrown error's header ("Error: write ENOSPC"), not just the
+  // message substring: a missing-guard TypeError would leak the script source
+  // (`new Error("write ENOSPC")`) into its code frame and match a looser regex,
+  // masking a regression. The colon-space header only appears on a real rethrow.
+  assert.match(res.stderr, /Error: write ENOSPC/, "the rethrown error reaches stderr");
+  assert.doesNotMatch(res.stderr, /is not a function/, "guard must be present, not absent");
+});
