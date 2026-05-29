@@ -63,6 +63,25 @@ fn cc_issue(
     }
 }
 
+fn coverage_intelligence_check_name(
+    recommendation: crate::health_types::CoverageIntelligenceRecommendation,
+) -> &'static str {
+    match recommendation {
+        crate::health_types::CoverageIntelligenceRecommendation::AddTestOrSplitBeforeMerge => {
+            "fallow/coverage-intelligence-risky-change"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::DeleteAfterConfirmingOwner => {
+            "fallow/coverage-intelligence-delete"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::ReviewBeforeChanging => {
+            "fallow/coverage-intelligence-review"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::RefactorCarefullyKeepBehavior => {
+            "fallow/coverage-intelligence-refactor"
+        }
+    }
+}
+
 /// Push CodeClimate issues for unused dependencies with a shared structure.
 fn push_dep_cc_issues<'a, I>(
     issues: &mut Vec<CodeClimateIssue>,
@@ -1140,6 +1159,48 @@ pub fn build_health_codeclimate(report: &HealthReport, root: &Path) -> Vec<CodeC
         }
     }
 
+    if let Some(ref intelligence) = report.coverage_intelligence {
+        for finding in &intelligence.findings {
+            let path = cc_path(&finding.path, root);
+            let check_name = coverage_intelligence_check_name(finding.recommendation);
+            let identity = finding.identity.as_deref().unwrap_or("code");
+            let description = format!(
+                "'{}' coverage intelligence verdict: {} ({})",
+                identity, finding.verdict, finding.recommendation,
+            );
+            let severity = match finding.verdict {
+                crate::health_types::CoverageIntelligenceVerdict::RiskyChangeDetected
+                | crate::health_types::CoverageIntelligenceVerdict::HighConfidenceDelete => {
+                    CodeClimateSeverity::Major
+                }
+                crate::health_types::CoverageIntelligenceVerdict::ReviewRequired
+                | crate::health_types::CoverageIntelligenceVerdict::RefactorCarefully => {
+                    CodeClimateSeverity::Minor
+                }
+                crate::health_types::CoverageIntelligenceVerdict::Clean
+                | crate::health_types::CoverageIntelligenceVerdict::Unknown => {
+                    continue;
+                }
+            };
+            let fp = fingerprint_hash(&[
+                check_name,
+                &path,
+                &finding.line.to_string(),
+                identity,
+                &finding.id,
+            ]);
+            issues.push(cc_issue(
+                check_name,
+                &description,
+                severity,
+                "Bug Risk",
+                &path,
+                Some(finding.line),
+                &fp,
+            ));
+        }
+    }
+
     if let Some(ref gaps) = report.coverage_gaps {
         for item in &gaps.files {
             let path = cc_path(&item.file.path, root);
@@ -1848,6 +1909,98 @@ mod tests {
                 .unwrap()
                 .contains("loader")
         );
+    }
+
+    #[test]
+    fn health_codeclimate_includes_coverage_intelligence_issue() {
+        use crate::health_types::{
+            CoverageIntelligenceAction, CoverageIntelligenceConfidence,
+            CoverageIntelligenceEvidence, CoverageIntelligenceFinding,
+            CoverageIntelligenceMatchConfidence, CoverageIntelligenceRecommendation,
+            CoverageIntelligenceReport, CoverageIntelligenceSchemaVersion,
+            CoverageIntelligenceSignal, CoverageIntelligenceSummary, CoverageIntelligenceVerdict,
+            HealthReport, HealthSummary,
+        };
+
+        let root = PathBuf::from("/project");
+        let report = HealthReport {
+            summary: HealthSummary {
+                files_analyzed: 10,
+                functions_analyzed: 50,
+                ..Default::default()
+            },
+            coverage_intelligence: Some(CoverageIntelligenceReport {
+                schema_version: CoverageIntelligenceSchemaVersion::V1,
+                verdict: CoverageIntelligenceVerdict::HighConfidenceDelete,
+                summary: CoverageIntelligenceSummary {
+                    findings: 1,
+                    high_confidence_deletes: 1,
+                    ..Default::default()
+                },
+                findings: vec![CoverageIntelligenceFinding {
+                    id: "fallow:coverage-intel:abc123".to_owned(),
+                    path: root.join("src/dead.ts"),
+                    identity: Some("deadPath".to_owned()),
+                    line: 9,
+                    verdict: CoverageIntelligenceVerdict::HighConfidenceDelete,
+                    signals: vec![CoverageIntelligenceSignal::RuntimeCold],
+                    recommendation: CoverageIntelligenceRecommendation::DeleteAfterConfirmingOwner,
+                    confidence: CoverageIntelligenceConfidence::High,
+                    related_ids: vec!["fallow:prod:deadbeef".to_owned()],
+                    evidence: CoverageIntelligenceEvidence {
+                        match_confidence: CoverageIntelligenceMatchConfidence::Direct,
+                        ..Default::default()
+                    },
+                    actions: vec![CoverageIntelligenceAction {
+                        kind: "delete-after-confirming-owner".to_owned(),
+                        description: "Confirm ownership".to_owned(),
+                        auto_fixable: false,
+                    }],
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let output = issues_to_value(&build_health_codeclimate(&report, &root));
+        let issues = output.as_array().unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0]["check_name"],
+            "fallow/coverage-intelligence-delete"
+        );
+        assert!(!issues[0]["fingerprint"].as_str().unwrap().is_empty());
+        assert_eq!(issues[0]["location"]["path"], "src/dead.ts");
+        assert!(
+            issues[0]["description"]
+                .as_str()
+                .unwrap()
+                .contains("deadPath")
+        );
+    }
+
+    #[test]
+    fn health_codeclimate_skips_summary_only_coverage_intelligence() {
+        use crate::health_types::{
+            CoverageIntelligenceReport, CoverageIntelligenceSchemaVersion,
+            CoverageIntelligenceSummary, CoverageIntelligenceVerdict, HealthReport,
+        };
+
+        let root = PathBuf::from("/project");
+        let report = HealthReport {
+            coverage_intelligence: Some(CoverageIntelligenceReport {
+                schema_version: CoverageIntelligenceSchemaVersion::V1,
+                verdict: CoverageIntelligenceVerdict::Clean,
+                summary: CoverageIntelligenceSummary {
+                    skipped_ambiguous_matches: 2,
+                    ..Default::default()
+                },
+                findings: vec![],
+            }),
+            ..Default::default()
+        };
+
+        let issues = build_health_codeclimate(&report, &root);
+        assert!(issues.is_empty());
     }
 
     #[test]

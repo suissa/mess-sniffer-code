@@ -1338,6 +1338,14 @@ pub fn build_health_sarif(
     if let Some(ref production) = report.runtime_coverage {
         append_runtime_coverage_sarif_results(&mut sarif_results, production, root, &mut snippets);
     }
+    if let Some(ref intelligence) = report.coverage_intelligence {
+        append_coverage_intelligence_sarif_results(
+            &mut sarif_results,
+            intelligence,
+            root,
+            &mut snippets,
+        );
+    }
 
     // Refactoring targets as SARIF results (warning level — advisory recommendations)
     for target in &report.targets {
@@ -1460,6 +1468,26 @@ pub fn build_health_sarif(
             "Runtime coverage finding",
             "note",
         ),
+        sarif_rule(
+            "fallow/coverage-intelligence-risky-change",
+            "Changed hot path combines high CRAP and low test coverage",
+            "warning",
+        ),
+        sarif_rule(
+            "fallow/coverage-intelligence-delete",
+            "Static and runtime evidence indicate code can be deleted",
+            "warning",
+        ),
+        sarif_rule(
+            "fallow/coverage-intelligence-review",
+            "Cold reachable uncovered code needs owner review",
+            "warning",
+        ),
+        sarif_rule(
+            "fallow/coverage-intelligence-refactor",
+            "Hot covered code has high CRAP and should be refactored carefully",
+            "warning",
+        ),
     ];
 
     serde_json::json!({
@@ -1534,6 +1562,74 @@ fn append_runtime_coverage_sarif_results(
             Some((finding.line, 1)),
             source_snippet.as_deref(),
         ));
+    }
+}
+
+// Summary-only coverage-intelligence state is intentionally omitted from SARIF.
+// SARIF should contain actionable diagnostic results, while JSON carries the
+// full verdict, skipped-match counts, and evidence matrix for agents.
+fn append_coverage_intelligence_sarif_results(
+    sarif_results: &mut Vec<serde_json::Value>,
+    intelligence: &crate::health_types::CoverageIntelligenceReport,
+    root: &Path,
+    snippets: &mut SourceSnippetCache,
+) {
+    for finding in &intelligence.findings {
+        let rule_id = coverage_intelligence_rule_id(finding.recommendation);
+        let level = match finding.verdict {
+            crate::health_types::CoverageIntelligenceVerdict::Clean
+            | crate::health_types::CoverageIntelligenceVerdict::Unknown => continue,
+            _ => "warning",
+        };
+        let uri = relative_uri(&finding.path, root);
+        let identity = finding.identity.as_deref().unwrap_or("code");
+        let signals = finding
+            .signals
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = format!(
+            "'{}' coverage intelligence verdict: {} ({}, signals: {})",
+            identity, finding.verdict, finding.recommendation, signals,
+        );
+        let source_snippet = snippets.line(&finding.path, finding.line);
+        let mut result = sarif_result_with_snippet(
+            rule_id,
+            level,
+            &message,
+            &uri,
+            Some((finding.line, 1)),
+            source_snippet.as_deref(),
+        );
+        result["properties"] = serde_json::json!({
+            "coverage_intelligence_id": &finding.id,
+            "verdict": finding.verdict,
+            "recommendation": finding.recommendation,
+            "confidence": finding.confidence,
+            "signals": &finding.signals,
+            "related_ids": &finding.related_ids,
+        });
+        sarif_results.push(result);
+    }
+}
+
+fn coverage_intelligence_rule_id(
+    recommendation: crate::health_types::CoverageIntelligenceRecommendation,
+) -> &'static str {
+    match recommendation {
+        crate::health_types::CoverageIntelligenceRecommendation::AddTestOrSplitBeforeMerge => {
+            "fallow/coverage-intelligence-risky-change"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::DeleteAfterConfirmingOwner => {
+            "fallow/coverage-intelligence-delete"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::ReviewBeforeChanging => {
+            "fallow/coverage-intelligence-review"
+        }
+        crate::health_types::CoverageIntelligenceRecommendation::RefactorCarefullyKeepBehavior => {
+            "fallow/coverage-intelligence-refactor"
+        }
     }
 }
 
@@ -1937,7 +2033,76 @@ mod tests {
         let rules = sarif["runs"][0]["tool"]["driver"]["rules"]
             .as_array()
             .unwrap();
-        assert_eq!(rules.len(), 12);
+        assert_eq!(rules.len(), 16);
+    }
+
+    #[test]
+    fn health_sarif_coverage_intelligence_preserves_structured_properties() {
+        use crate::health_types::{
+            CoverageIntelligenceAction, CoverageIntelligenceConfidence,
+            CoverageIntelligenceEvidence, CoverageIntelligenceFinding,
+            CoverageIntelligenceMatchConfidence, CoverageIntelligenceRecommendation,
+            CoverageIntelligenceReport, CoverageIntelligenceSchemaVersion,
+            CoverageIntelligenceSignal, CoverageIntelligenceSummary, CoverageIntelligenceVerdict,
+            HealthReport, HealthSummary,
+        };
+
+        let root = PathBuf::from("/project");
+        let report = HealthReport {
+            summary: HealthSummary {
+                files_analyzed: 10,
+                functions_analyzed: 50,
+                ..Default::default()
+            },
+            coverage_intelligence: Some(CoverageIntelligenceReport {
+                schema_version: CoverageIntelligenceSchemaVersion::V1,
+                verdict: CoverageIntelligenceVerdict::HighConfidenceDelete,
+                summary: CoverageIntelligenceSummary {
+                    findings: 1,
+                    high_confidence_deletes: 1,
+                    ..Default::default()
+                },
+                findings: vec![CoverageIntelligenceFinding {
+                    id: "fallow:coverage-intel:abc123".to_owned(),
+                    path: root.join("src/dead.ts"),
+                    identity: Some("deadPath".to_owned()),
+                    line: 9,
+                    verdict: CoverageIntelligenceVerdict::HighConfidenceDelete,
+                    signals: vec![CoverageIntelligenceSignal::RuntimeCold],
+                    recommendation: CoverageIntelligenceRecommendation::DeleteAfterConfirmingOwner,
+                    confidence: CoverageIntelligenceConfidence::High,
+                    related_ids: vec!["fallow:prod:deadbeef".to_owned()],
+                    evidence: CoverageIntelligenceEvidence {
+                        match_confidence: CoverageIntelligenceMatchConfidence::Direct,
+                        ..Default::default()
+                    },
+                    actions: vec![CoverageIntelligenceAction {
+                        kind: "delete-after-confirming-owner".to_owned(),
+                        description: "Confirm ownership".to_owned(),
+                        auto_fixable: false,
+                    }],
+                }],
+            }),
+            ..Default::default()
+        };
+
+        let sarif = build_health_sarif(&report, &root);
+        let result = &sarif["runs"][0]["results"][0];
+        assert_eq!(result["ruleId"], "fallow/coverage-intelligence-delete");
+        assert_eq!(
+            result["properties"]["coverage_intelligence_id"],
+            "fallow:coverage-intel:abc123"
+        );
+        assert_eq!(
+            result["properties"]["recommendation"],
+            "delete-after-confirming-owner"
+        );
+        assert_eq!(result["properties"]["confidence"], "high");
+        assert_eq!(result["properties"]["signals"][0], "runtime_cold");
+        assert_eq!(
+            result["properties"]["related_ids"][0],
+            "fallow:prod:deadbeef"
+        );
     }
 
     #[test]
