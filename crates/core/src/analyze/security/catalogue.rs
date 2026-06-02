@@ -37,6 +37,16 @@ struct RawMatcher {
     evidence_template: String,
     #[serde(default)]
     import_provenance: Option<String>,
+    /// Optional framework enabler: a package name that gates this row on the
+    /// active framework (issue #861). The plugin system already activates on the
+    /// declared dependency set, so a row carrying `enabler = "@angular/platform-browser"`
+    /// fires only when that package (or, with a trailing `/`, any package under
+    /// that prefix) is present in the project's declared dependencies. Lets a
+    /// framework-specific idiom (`bypassSecurityTrustHtml`, `dangerouslySetInnerHTML`)
+    /// be recognized with higher precision without a new enum variant. Unset means
+    /// the row is global (the prior behavior).
+    #[serde(default)]
+    enabler: Option<String>,
     /// Optional allowlist of argument shapes. When set, the captured sink site's
     /// `arg_kind` must be one of the listed kebab-case kinds for the matcher to
     /// fire. Lets a matcher require the unsafe SQL shapes (`concat`,
@@ -137,6 +147,10 @@ pub struct Matcher {
     pub arg_index: u32,
     pub evidence_template: String,
     pub import_provenance: Option<String>,
+    /// Framework enabler package gate (issue #861). `None` = global row.
+    /// `Some("pkg")` requires an exact dependency match; `Some("@scope/")`
+    /// (trailing slash) requires any dependency under that prefix.
+    pub enabler: Option<String>,
     /// Resolved allowlist of admitted argument shapes. `None` admits any
     /// non-literal shape; `Some` requires the captured `arg_kind` to be listed.
     pub arg_kinds: Option<Vec<SinkArgKind>>,
@@ -164,6 +178,28 @@ impl Matcher {
         self.arg_kinds
             .as_ref()
             .is_none_or(|kinds| kinds.contains(&arg_kind))
+    }
+
+    /// Whether this matcher's framework enabler is satisfied by the project's
+    /// declared dependency set (issue #861). `None` enabler is always satisfied
+    /// (a global row). A `Some` enabler matches by exact package name, or, when
+    /// it ends with `/`, by prefix (`@angular/` matches `@angular/platform-browser`),
+    /// mirroring the plugin-system `enablers()` semantics so framework rows
+    /// activate on exactly the dependency universe the plugins do.
+    #[must_use]
+    pub fn enabler_satisfied(&self, declared_deps: &rustc_hash::FxHashSet<String>) -> bool {
+        let Some(enabler) = &self.enabler else {
+            return true;
+        };
+        if let Some(prefix) = enabler.strip_suffix('/') {
+            // Trailing-slash prefix match, e.g. `@fastify/` -> `@fastify/static`.
+            // Also admit the bare scope name itself (`@fastify`).
+            declared_deps
+                .iter()
+                .any(|d| d == prefix || d.starts_with(enabler))
+        } else {
+            declared_deps.contains(enabler)
+        }
     }
 }
 
@@ -284,6 +320,15 @@ fn parse_catalogue(src: &str) -> Result<Catalogue, String> {
                 Some(kinds)
             }
         };
+        let enabler = match entry.enabler {
+            Some(e) if e.trim().is_empty() => {
+                return Err(format!(
+                    "matcher {:?} has an empty / whitespace enabler; omit the key for a global row",
+                    entry.id
+                ));
+            }
+            other => other,
+        };
         matchers.push(Matcher {
             id: entry.id,
             cwe: entry.cwe,
@@ -293,6 +338,7 @@ fn parse_catalogue(src: &str) -> Result<Catalogue, String> {
             arg_index: entry.arg_index,
             evidence_template: entry.evidence_template,
             import_provenance: entry.import_provenance,
+            enabler,
             arg_kinds,
         });
     }
@@ -346,7 +392,11 @@ mod tests {
         let mut seen = FxHashSet::default();
         for m in &raw.matcher {
             let pats = m.callee_patterns.join("|");
-            let key = format!("{}::{}::{pats}", m.id, m.sink_shape);
+            // Uniqueness includes the enabler: framework-scoped rows (#861) may
+            // legitimately share id + shape + patterns and differ only by their
+            // framework gate (e.g. one `route-send-file` row per framework).
+            let enabler = m.enabler.as_deref().unwrap_or("");
+            let key = format!("{}::{}::{pats}::{enabler}", m.id, m.sink_shape);
             assert!(seen.insert(key.clone()), "duplicate matcher row: {key}");
         }
     }
@@ -616,6 +666,97 @@ evidence_template = "x"
 "#;
         let err = parse_catalogue(toml).unwrap_err();
         assert!(err.contains("unknown arg_kind"), "got: {err}");
+    }
+
+    #[test]
+    fn enabler_unset_is_global() {
+        // A matcher with no enabler is satisfied by ANY (even empty) dep set.
+        let html = catalogue()
+            .matchers()
+            .iter()
+            .find(|m| m.id == "dangerous-html")
+            .expect("dangerous-html present");
+        assert!(html.enabler.is_none(), "dangerous-html is a global row");
+        assert!(html.enabler_satisfied(&FxHashSet::default()));
+    }
+
+    #[test]
+    fn enabler_satisfied_exact_and_prefix() {
+        let mut m = catalogue()
+            .matchers()
+            .iter()
+            .find(|m| m.id == "dangerous-html")
+            .cloned()
+            .expect("dangerous-html present");
+
+        // Exact match.
+        m.enabler = Some("jquery".to_string());
+        let mut deps = FxHashSet::default();
+        assert!(!m.enabler_satisfied(&deps), "absent dep is not satisfied");
+        deps.insert("jquery".to_string());
+        assert!(m.enabler_satisfied(&deps), "present exact dep satisfies");
+
+        // Trailing-slash prefix match, plus the bare scope name.
+        m.enabler = Some("@angular/".to_string());
+        let mut scoped = FxHashSet::default();
+        assert!(!m.enabler_satisfied(&scoped));
+        scoped.insert("@angular/platform-browser".to_string());
+        assert!(m.enabler_satisfied(&scoped), "prefix dep satisfies");
+        let mut bare_scope = FxHashSet::default();
+        bare_scope.insert("@angular".to_string());
+        assert!(
+            m.enabler_satisfied(&bare_scope),
+            "bare scope name satisfies the prefix form"
+        );
+
+        // A near-miss exact name does not satisfy a prefix-less enabler.
+        m.enabler = Some("react".to_string());
+        let mut reactish = FxHashSet::default();
+        reactish.insert("react-dom".to_string());
+        assert!(
+            !m.enabler_satisfied(&reactish),
+            "exact enabler must not prefix-match"
+        );
+    }
+
+    #[test]
+    fn framework_scoped_rows_are_present() {
+        // The framework-scoped rows added in #861 carry an enabler.
+        let cat = catalogue();
+        let angular = cat
+            .matchers()
+            .iter()
+            .find(|m| m.id == "angular-trusted-html")
+            .expect("angular-trusted-html present");
+        assert_eq!(
+            angular.enabler.as_deref(),
+            Some("@angular/platform-browser")
+        );
+        assert!(
+            cat.matchers().iter().any(|m| m.id == "jquery-html"),
+            "jquery-html present"
+        );
+        assert!(
+            cat.matchers().iter().any(|m| m.id == "dom-document-write"),
+            "dom-document-write present"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_empty_enabler() {
+        let toml = r#"
+[[matcher]]
+id = "x"
+cwe = 79
+title = "x"
+sink_shape = "member-call"
+callee_patterns = ["*.html"]
+arg_index = 0
+enabler = "   "
+evidence_template = "x"
+"#;
+        let err = parse_catalogue(toml).unwrap_err();
+        assert!(err.contains("empty / whitespace enabler"), "got: {err}");
     }
 
     #[test]

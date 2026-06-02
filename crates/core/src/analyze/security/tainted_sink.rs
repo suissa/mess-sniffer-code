@@ -160,15 +160,20 @@ pub fn find_tainted_sinks(
     suppressions: &SuppressionContext<'_>,
     line_offsets_by_file: &LineOffsetsMap<'_>,
     category_filter: &CategoryFilter,
+    declared_deps: &rustc_hash::FxHashSet<String>,
     root: &std::path::Path,
 ) -> (Vec<SecurityFinding>, TaintedSinkStats) {
     let mut stats = TaintedSinkStats::default();
 
-    // Pre-filter the catalogue by the category scope. Empty -> nothing to do.
+    // Pre-filter the catalogue by the category scope AND the framework enabler
+    // gate (#861). `enabler_satisfied` depends only on the project's declared
+    // dependency set, not the per-module state, so it is hoisted here: a
+    // framework-scoped row whose enabler package is absent never participates.
+    // Empty -> nothing to do.
     let active: Vec<&Matcher> = catalogue()
         .matchers()
         .iter()
-        .filter(|m| category_filter.admits(&m.id))
+        .filter(|m| category_filter.admits(&m.id) && m.enabler_satisfied(declared_deps))
         .collect();
     if active.is_empty() {
         return (Vec::new(), stats);

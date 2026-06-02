@@ -100,6 +100,8 @@ mod security_catalogue_categories;
 mod security_client_server_leak;
 #[path = "integration_test/security_dangerous_html.rs"]
 mod security_dangerous_html;
+#[path = "integration_test/security_framework_sinks.rs"]
+mod security_framework_sinks;
 #[path = "integration_test/stale_suppressions.rs"]
 mod stale_suppressions;
 #[path = "integration_test/suppression_comments.rs"]

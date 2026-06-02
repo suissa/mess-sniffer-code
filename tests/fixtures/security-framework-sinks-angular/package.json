@@ -1,0 +1,9 @@
+{
+  "name": "security-framework-sinks-angular-fixture",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@angular/core": "18.0.0",
+    "@angular/platform-browser": "18.0.0"
+  }
+}

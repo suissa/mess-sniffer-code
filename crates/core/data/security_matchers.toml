@@ -22,6 +22,15 @@
 # matcher is skipped (the one place we trade a potential false-negative for
 # false-positive reduction on same-named locals).
 #
+# Optional `enabler` gates a row on the ACTIVE FRAMEWORK (issue #861): a package
+# name that must appear in the project's declared dependency set for the row to
+# fire. A trailing `/` makes it a prefix gate (`@angular/` matches
+# `@angular/platform-browser`); the bare scope name also satisfies the prefix
+# form. The plugin system activates on exactly this dependency universe, so
+# `enabler` lets a per-framework idiom (Angular bypassSecurityTrust*, jQuery
+# `.html()`) be recognized with higher precision and fewer false positives,
+# WITHOUT a new enum variant. Unset = a global row (the default).
+#
 # Optional arg_kinds is an allowlist of captured argument shapes (kebab-case:
 # template-with-subst | concat | object | call | other). When set, the matcher
 # fires ONLY when the captured non-literal argument is one of the listed shapes.
@@ -218,3 +227,112 @@ callee_patterns = ["yaml.load", "jsyaml.load"]
 arg_index = 0
 import_provenance = "js-yaml"
 evidence_template = "js-yaml load() without a safe schema. Candidate for verification: use load with the default safe schema (js-yaml >=4) or an explicit SAFE_SCHEMA."
+
+# ════════════════════════════════════════════════════════════════════════════
+# FRAMEWORK-SCOPED ROWS (issue #861)
+#
+# Each carries an `enabler`: the row fires only when the named package is in the
+# project's declared dependencies, so a per-framework idiom is recognized with
+# higher precision and fewer false positives on same-named members in unrelated
+# projects. These are ADDITIVE to the global rows above; the global
+# `dangerous-html` jsx-attr row already covers React `dangerouslySetInnerHTML`
+# without a framework gate (innerHTML is dangerous regardless of framework), so
+# it is intentionally NOT duplicated here. Add frameworks incrementally.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Angular: DomSanitizer.bypassSecurityTrust* (CWE-79) ─────────────────────
+# Angular sanitizes interpolated/bound values by default; the bypassSecurityTrust*
+# methods are the documented escape hatch that re-introduces XSS risk. Scoped to
+# @angular/platform-browser (the package that exports DomSanitizer). `*.` matches
+# any receiver (`this.sanitizer.bypassSecurityTrustHtml`, `sanitizer.bypass...`).
+[[matcher]]
+id = "angular-trusted-html"
+cwe = 79
+title = "Angular bypassSecurityTrust sink"
+sink_shape = "member-call"
+callee_patterns = [
+  "*.bypassSecurityTrustHtml",
+  "*.bypassSecurityTrustScript",
+  "*.bypassSecurityTrustStyle",
+  "*.bypassSecurityTrustUrl",
+  "*.bypassSecurityTrustResourceUrl",
+]
+arg_index = 0
+enabler = "@angular/platform-browser"
+evidence_template = "Non-literal value passed to Angular's {callee}(). Candidate for verification: bypassSecurityTrust* disables Angular's built-in sanitization; confirm the value is not attacker-controlled."
+
+# ── Next.js: redirect() / permanentRedirect() (CWE-601) ─────────────────────
+# Next.js App Router server redirect helpers. A non-literal target is an
+# open-redirect candidate. Provenance-gated to next/navigation AND framework
+# enabler `next`, so a same-named local `redirect` in a non-Next project is inert.
+[[matcher]]
+id = "nextjs-open-redirect"
+cwe = 601
+title = "Next.js open redirect sink"
+sink_shape = "call"
+callee_patterns = ["redirect", "permanentRedirect"]
+arg_index = 0
+import_provenance = "next/navigation"
+enabler = "next"
+evidence_template = "Non-literal target passed to Next.js {callee}(). Candidate for verification: confirm the redirect target is a relative path or allowlisted host, not attacker-controlled."
+
+# ── DOM: document.write / document.writeln (CWE-79) ─────────────────────────
+# A global DOM sink (no framework enabler): document.write of a non-literal value
+# is an XSS candidate. Still non-literal-gated, so `document.write("<p>x</p>")`
+# is never captured.
+[[matcher]]
+id = "dom-document-write"
+cwe = 79
+title = "DOM document.write sink"
+sink_shape = "member-call"
+callee_patterns = ["document.write", "document.writeln"]
+arg_index = 0
+evidence_template = "Non-literal value passed to {callee}(). Candidate for verification: confirm the markup is not attacker-controlled or is sanitized (prefer DOM construction over document.write)."
+
+# ── jQuery: $(...).html(value) (CWE-79) ─────────────────────────────────────
+# jQuery's `.html(value)` setter parses the argument as HTML. Scoped to a
+# `jquery` dependency because `.html` is an extremely common method name; the
+# enabler keeps it from firing on unrelated `.html()` calls in non-jQuery code.
+[[matcher]]
+id = "jquery-html"
+cwe = 79
+title = "jQuery .html() sink"
+sink_shape = "member-call"
+callee_patterns = ["*.html"]
+arg_index = 0
+enabler = "jquery"
+evidence_template = "Non-literal value passed to jQuery {callee}(). Candidate for verification: jQuery .html() parses its argument as markup; confirm the value is not attacker-controlled or is sanitized."
+
+# ── Express / Fastify / Hono: res.sendFile route sink (CWE-22) ──────────────
+# A route handler that serves a file whose path is a non-literal is a path-
+# traversal candidate. One row per framework so each is gated on its own
+# dependency. `*.sendFile` matches `res.sendFile`, `reply.sendFile`, `c.sendFile`.
+[[matcher]]
+id = "route-send-file"
+cwe = 22
+title = "Route file-send path traversal sink"
+sink_shape = "member-call"
+callee_patterns = ["*.sendFile"]
+arg_index = 0
+enabler = "express"
+evidence_template = "Non-literal path passed to {callee}(). Candidate for verification: confirm the served path cannot escape the intended directory (reject `..`)."
+
+[[matcher]]
+id = "route-send-file"
+cwe = 22
+title = "Route file-send path traversal sink"
+sink_shape = "member-call"
+callee_patterns = ["*.sendFile"]
+arg_index = 0
+enabler = "@fastify/"
+evidence_template = "Non-literal path passed to {callee}(). Candidate for verification: confirm the served path cannot escape the intended directory (reject `..`)."
+
+[[matcher]]
+id = "route-send-file"
+cwe = 22
+title = "Route file-send path traversal sink"
+sink_shape = "member-call"
+callee_patterns = ["*.sendFile"]
+arg_index = 0
+enabler = "hono"
+evidence_template = "Non-literal path passed to {callee}(). Candidate for verification: confirm the served path cannot escape the intended directory (reject `..`)."

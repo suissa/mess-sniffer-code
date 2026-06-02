@@ -421,6 +421,32 @@ fn run_export_usages_collector(
     }
 }
 
+/// Collect every package name declared across the root `package.json` and each
+/// workspace `package.json`. This is the dependency universe the plugin system
+/// activates on, reused by the framework-scoped security catalogue rows (#861) to
+/// gate a row on the active framework. Missing or malformed manifests contribute
+/// nothing (a framework row simply stays inert), matching the conservative
+/// false-negatives-over-false-positives posture.
+fn collect_declared_dependency_names(
+    config: &ResolvedConfig,
+    root_pkg: Option<&PackageJson>,
+    workspaces: &[fallow_config::WorkspaceInfo],
+) -> FxHashSet<String> {
+    let mut deps: FxHashSet<String> = FxHashSet::default();
+    if let Some(pkg) = root_pkg {
+        deps.extend(pkg.all_dependency_names());
+    }
+    for ws in workspaces {
+        if ws.root == config.root {
+            continue; // already covered by root_pkg
+        }
+        if let Ok(pkg) = PackageJson::load(&ws.root.join("package.json")) {
+            deps.extend(pkg.all_dependency_names());
+        }
+    }
+    deps
+}
+
 /// Find all dead code, with optional resolved module data, plugin context, and workspace info.
 #[expect(
     deprecated,
@@ -836,12 +862,18 @@ pub fn find_dead_code_full(
             categories.and_then(|c| c.include.clone()),
             categories.and_then(|c| c.exclude.clone()),
         );
+        // Framework-scoped catalogue rows (#861) gate on the active framework via
+        // the project's declared dependency set: the same dependency universe the
+        // plugin system activates on (root package.json + every workspace
+        // package.json). Built once here and passed to the detector.
+        let declared_deps = collect_declared_dependency_names(config, pkg.as_ref(), workspaces);
         let (sink_findings, sink_stats) = security::find_tainted_sinks(
             graph,
             modules,
             &suppressions,
             &line_offsets_by_file,
             &filter,
+            &declared_deps,
             &config.root,
         );
         results.security_findings.extend(sink_findings);
