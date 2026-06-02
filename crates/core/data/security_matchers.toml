@@ -383,3 +383,148 @@ title = "Browser location input"
 # `location.search`, `location.hash`, `window.location.href`,
 # `document.location.search`. Attacker-influenceable URL surface in the browser.
 path_patterns = ["*.search", "*.hash", "location.href", "*.location.href"]
+
+# ── CWE-1321: Prototype pollution ────────────────────────────────────────────
+# Two distinct shapes, both source-model-free. (1) A static `obj.__proto__ = x`
+# member-assign with a non-literal RHS directly mutates the prototype; the
+# extract layer captures only static-member assigns, so `obj[key] = x` (the
+# computed form) is a documented blind spot, never a false positive. (2) A
+# recursive-merge call (lodash `merge` / `mergeWith` / `defaultsDeep` / `setWith`,
+# bare or namespaced) with a non-literal source is the classic
+# CVE-shaped pollution vector when the source is attacker-controlled. We do NOT
+# require import provenance: `merge` callees are distinctive enough, and the
+# downstream agent verifies the source is attacker-reachable. The merge rows
+# constrain arg_kinds to `other` (a variable / member access) and `call` (a
+# parse/JSON result) and deliberately EXCLUDE `object`: an inline object literal
+# source (`merge(base, { theme: "dark" })`) is developer-controlled, not attacker
+# data, so excluding it trades a false-negative for far fewer false-positives.
+[[matcher]]
+id = "prototype-pollution"
+cwe = 1321
+title = "Prototype pollution sink"
+sink_shape = "member-assign"
+callee_patterns = ["*.__proto__"]
+arg_index = 0
+evidence_template = "Non-literal value assigned to {callee} (a direct prototype write). Candidate for verification: confirm the right-hand value and any key are not attacker-controlled."
+
+[[matcher]]
+id = "prototype-pollution"
+cwe = 1321
+title = "Prototype pollution sink"
+sink_shape = "call"
+callee_patterns = ["merge", "mergeWith", "defaultsDeep", "setWith"]
+arg_index = 1
+arg_kinds = ["other", "call"]
+evidence_template = "Non-literal source passed to {callee}() (a recursive merge). Candidate for verification: confirm the merged source cannot carry `__proto__` / `constructor` / `prototype` keys from attacker input."
+
+[[matcher]]
+id = "prototype-pollution"
+cwe = 1321
+title = "Prototype pollution sink"
+sink_shape = "member-call"
+callee_patterns = ["*.merge", "*.mergeWith", "*.defaultsDeep", "*.setWith"]
+arg_index = 1
+arg_kinds = ["other", "call"]
+evidence_template = "Non-literal source passed to {callee}() (a recursive merge). Candidate for verification: confirm the merged source cannot carry `__proto__` / `constructor` / `prototype` keys from attacker input."
+
+# ── CWE-22: Zip-slip / tar path traversal on archive extraction ──────────────
+# An archive entry whose name contains `../` escapes the extraction directory
+# (zip-slip / tar-slip). The high-signal sink is the extraction call with a
+# non-literal destination/entry path: `tar.x` / `tar.extract` (node-tar),
+# adm-zip's `*.extractAllTo` / `*.extractEntryTo`. A literal, hard-coded dest is
+# never captured. We cannot see per-entry sanitization statically, so this is a
+# candidate for the agent to verify the library validates entry paths.
+[[matcher]]
+id = "zip-slip"
+cwe = 22
+title = "Archive path-traversal (zip-slip) sink"
+sink_shape = "member-call"
+callee_patterns = ["tar.x", "tar.extract", "*.extractAllTo", "*.extractEntryTo"]
+arg_index = 0
+# Exclude `object`: node-tar's `tar.x({ file, cwd })` passes an options-object
+# literal in arg 0, which is developer-authored config, not a traversable path.
+# A non-literal path variable (`*.extractAllTo(destDir)`) is still the `other`
+# shape and fires.
+arg_kinds = ["other", "concat", "template-with-subst"]
+evidence_template = "Non-literal destination/entry passed to {callee}() (archive extraction). Candidate for verification: confirm archive entry names cannot escape the target directory (reject `..`), guarding against zip-slip."
+
+# ── CWE-943: NoSQL injection ─────────────────────────────────────────────────
+# A user-supplied object reaching a Mongo/Mongoose query operator lets an
+# attacker inject operators (`{ $where: ... }`, `{ $gt: '' }`) that change the
+# query semantics. The conservative trigger: a query/update/delete member-call
+# whose query argument is the `other` shape, i.e. a bare variable / member access
+# (`findOne(userQuery)`, `updateOne(req.query)`) where the whole filter is passed
+# through. arg_kinds is restricted to `other` so an inline object literal
+# (`findOne({ active: true })`, classified `object`) does NOT fire: an inline
+# filter is developer-authored, so excluding it trades a false-negative (an inline
+# `findOne({ name: userInput })`) for far fewer false-positives on the very common
+# constant-filter form. The downstream agent verifies the passed object is
+# attacker-reachable.
+#
+# `*.find` is deliberately EXCLUDED: it collides with `Array.prototype.find`, and
+# a callback argument (`users.find(u => u.active)`) classifies as the `other`
+# shape, so a bare `*.find` row would fire on ubiquitous array iteration. Only the
+# Mongo-specific verbs below (no Array.prototype equivalent) are matched; this
+# keeps the prefer-false-negatives principle intact (a Mongo `.find(userQuery)` is
+# a documented blind spot rather than a source of array-iteration false positives).
+[[matcher]]
+id = "nosql-injection"
+cwe = 943
+title = "NoSQL injection sink"
+sink_shape = "member-call"
+callee_patterns = ["*.findOne", "*.findOneAndUpdate", "*.updateOne", "*.updateMany", "*.deleteOne", "*.deleteMany"]
+arg_index = 0
+arg_kinds = ["other"]
+evidence_template = "Non-literal query passed to {callee}() (a whole filter object passed through). Candidate for verification: confirm user input cannot inject query operators (`$where`, `$gt`, `$ne`); cast/validate the field types before querying."
+
+# ── CWE-1336: Server-side template injection (SSTI) ──────────────────────────
+# Compiling or rendering a template from a non-literal source lets an attacker
+# inject template directives that execute on the server. The sink is a
+# template-engine compile/render member-call on a NAMED engine
+# (`handlebars.compile`, `eta.render` / `eta.compile`, `pug.compile`,
+# `ejs.render`, `nunjucks.renderString` / `nunjucks.compile`) whose template
+# argument is non-literal. The broad `*.compile` / `*.renderString` wildcards are
+# deliberately NOT used: `.compile()` is exposed by Babel, PostCSS, TypeScript and
+# many unrelated tools, so a bare wildcard over-fires (and a callback arg there
+# classifies `other`). Pinning to known template engines keeps precision. arg_kinds
+# excludes `object`: a `render(template, data)` object in arg 0 would be the data
+# bag, not the template; string-ish / call / other shapes keep the trigger on the
+# template source.
+[[matcher]]
+id = "ssti"
+cwe = 1336
+title = "Server-side template injection sink"
+sink_shape = "member-call"
+callee_patterns = ["handlebars.compile", "eta.render", "eta.compile", "pug.compile", "ejs.render", "nunjucks.renderString", "nunjucks.compile"]
+arg_index = 0
+arg_kinds = ["template-with-subst", "concat", "call", "other"]
+evidence_template = "Non-literal template source passed to {callee}(). Candidate for verification: confirm the template body is not attacker-controlled (SSTI executes template directives server-side)."
+
+# ── CWE-611: XML external entity (XXE) expansion ─────────────────────────────
+# Parsing untrusted XML with entity expansion enabled allows external-entity and
+# billion-laughs attacks. The conservative, source-model-free trigger: an XML
+# parse member-call (`libxml.parseXml` / `libxml.parseXmlString`,
+# `*.parseStringPromise` / `*.parseString` style APIs) on a non-literal document.
+# The entity-expansion option (`noent: true`) is a literal we cannot read here, so
+# this is a candidate for the agent to confirm the parser disables external
+# entities and DTD expansion.
+[[matcher]]
+id = "xxe"
+cwe = 611
+title = "XML external entity (XXE) sink"
+sink_shape = "member-call"
+callee_patterns = ["libxml.parseXml", "libxml.parseXmlString", "*.parseXmlString", "*.parseStringPromise"]
+arg_index = 0
+evidence_template = "Non-literal XML document passed to {callee}(). Candidate for verification: confirm the parser disables external-entity / DTD expansion (no `noent`), guarding against XXE and entity-expansion attacks."
+
+# DEFERRED (source-model-free but signal is a LITERAL value, or needs a new
+# structural-capture path; out of scope for this TOML-only pass, see
+# .plans/issue-862-cwe-categories.md):
+#   - ReDoS: risky regex LITERAL structure (nested quantifiers); RegExpLiteral is
+#     a literal and never captured. Needs a regex-structural capture hook.
+#   - insecure cookies: signal is a missing / `false` `httpOnly`/`secure` option.
+#   - permissive CORS: signal is a literal `origin: '*'`.
+#   - postMessage without origin: signal is a literal `'*'` target.
+#   - JWT alg:none / hardcoded signing secret: signals are literals.
+# insecure-randomness (Math.random) and hardcoded-secrets-entropy are separately
+# deferred to #859 (they require its source model), not re-added here.

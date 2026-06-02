@@ -308,3 +308,126 @@ fn unsafe_deserialization_default_off_emits_nothing() {
         "security-unsafe-deserialization"
     )));
 }
+
+// ── prototype-pollution (CWE-1321), ungated (broad tier) ─────────────────────
+
+#[test]
+fn prototype_pollution_non_literal_merge_fires() {
+    // A recursive merge of a non-literal (variable) source is the pollution shape.
+    let results = analyze_with_security_sink("security-prototype-pollution");
+    assert_candidate(&results, "src/sink.ts", "prototype-pollution", 1321);
+}
+
+#[test]
+fn prototype_pollution_inline_object_does_not_fire() {
+    // An inline object-literal merge source is the `object` arg shape, which the
+    // merge rows exclude (only `other`/`call` fire), so it must NOT be flagged.
+    let results = analyze_with_security_sink("security-prototype-pollution");
+    assert!(
+        !anchored_on(&results, "src/safe.ts"),
+        "an inline-object-literal merge source must not be flagged"
+    );
+}
+
+#[test]
+fn prototype_pollution_default_off_emits_nothing() {
+    assert!(no_tainted_sinks(&analyze_default_off(
+        "security-prototype-pollution"
+    )));
+}
+
+// ── zip-slip / tar path traversal (CWE-22), ungated (broad tier) ─────────────
+
+#[test]
+fn zip_slip_non_literal_dest_fires() {
+    let results = analyze_with_security_sink("security-zip-slip");
+    assert_candidate(&results, "src/sink.ts", "zip-slip", 22);
+}
+
+#[test]
+fn zip_slip_literal_dest_does_not_fire() {
+    let results = analyze_with_security_sink("security-zip-slip");
+    assert!(
+        !anchored_on(&results, "src/safe.ts"),
+        "a fully-literal extraction destination must not be flagged"
+    );
+}
+
+#[test]
+fn zip_slip_default_off_emits_nothing() {
+    assert!(no_tainted_sinks(&analyze_default_off("security-zip-slip")));
+}
+
+// ── nosql-injection (CWE-943), ungated (broad tier) ──────────────────────────
+
+#[test]
+fn nosql_injection_passthrough_object_fires() {
+    // A whole user-controlled filter passed through to a Mongo-specific verb
+    // (`findOne`, the `other` shape) fires.
+    let results = analyze_with_security_sink("security-nosql-injection");
+    assert_candidate(&results, "src/sink.ts", "nosql-injection", 943);
+}
+
+#[test]
+fn nosql_injection_safe_forms_do_not_fire() {
+    // Two negatives in src/safe.ts must both stay silent: an inline object-literal
+    // filter (the `object` shape, excluded) and `Array.prototype.find(callback)`
+    // (the `*.find` pattern is deliberately dropped so array iteration is never
+    // mistaken for a Mongo query).
+    let results = analyze_with_security_sink("security-nosql-injection");
+    assert!(
+        !anchored_on(&results, "src/safe.ts"),
+        "neither an inline-object filter nor Array.prototype.find may be flagged"
+    );
+}
+
+#[test]
+fn nosql_injection_default_off_emits_nothing() {
+    assert!(no_tainted_sinks(&analyze_default_off(
+        "security-nosql-injection"
+    )));
+}
+
+// ── ssti (CWE-1336), ungated (broad tier) ────────────────────────────────────
+
+#[test]
+fn ssti_non_literal_template_fires() {
+    let results = analyze_with_security_sink("security-ssti");
+    assert_candidate(&results, "src/sink.ts", "ssti", 1336);
+}
+
+#[test]
+fn ssti_literal_template_does_not_fire() {
+    let results = analyze_with_security_sink("security-ssti");
+    assert!(
+        !anchored_on(&results, "src/safe.ts"),
+        "a fully-literal template source must not be flagged"
+    );
+}
+
+#[test]
+fn ssti_default_off_emits_nothing() {
+    assert!(no_tainted_sinks(&analyze_default_off("security-ssti")));
+}
+
+// ── xxe (CWE-611), ungated (broad tier) ──────────────────────────────────────
+
+#[test]
+fn xxe_non_literal_document_fires() {
+    let results = analyze_with_security_sink("security-xxe");
+    assert_candidate(&results, "src/sink.ts", "xxe", 611);
+}
+
+#[test]
+fn xxe_literal_document_does_not_fire() {
+    let results = analyze_with_security_sink("security-xxe");
+    assert!(
+        !anchored_on(&results, "src/safe.ts"),
+        "a fully-literal XML document must not be flagged"
+    );
+}
+
+#[test]
+fn xxe_default_off_emits_nothing() {
+    assert!(no_tainted_sinks(&analyze_default_off("security-xxe")));
+}
