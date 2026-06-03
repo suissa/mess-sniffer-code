@@ -58,9 +58,7 @@ export const getDuplicationMode = (): DuplicationMode =>
   getConfig().get<DuplicationMode>("duplication.mode", "mild");
 
 export const getDuplicationMinOccurrences = (): number =>
-  clampMinOccurrences(
-    getConfig().get<number>("duplication.minOccurrences", MIN_OCCURRENCES_FLOOR)
-  );
+  clampMinOccurrences(getConfig().get<number>("duplication.minOccurrences", MIN_OCCURRENCES_FLOOR));
 
 export const getProduction = (): boolean => getConfig().get<boolean>("production", false);
 
