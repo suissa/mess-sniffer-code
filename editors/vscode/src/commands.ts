@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import {
   getLspPath,
   getProduction,
+  getDuplicationMinOccurrences,
   getDuplicationMode,
   getDuplicationThreshold,
   getIssueTypes,
@@ -292,6 +293,7 @@ export const runAnalysis = async (
 
     analysisArgs.push("--dupes-mode", getDuplicationMode());
     analysisArgs.push("--dupes-threshold", String(getDuplicationThreshold()));
+    analysisArgs.push("--dupes-min-occurrences", String(getDuplicationMinOccurrences()));
 
     const output = await execFallow(context, analysisArgs, root);
 

@@ -34,7 +34,7 @@ Wraps the `fallow-lsp` binary with additional UI features. TypeScript codebase b
 - **Diagnostic mute**: client-side filter backed by the LSP issue-type catalog. On startup the extension requests `fallow/issueTypes`; if the request fails (older LSP or invalid response), it falls back to the bundled `DIAGNOSTIC_CATEGORIES` list in `diagnosticFilter.ts`. Muting remains instant and does not restart the LSP. State lives in `context.workspaceState` under `fallow.diagnosticFilter.v1`. Filter ALWAYS guards on `Diagnostic.source === "fallow"` so TypeScript / ESLint diagnostics flow through untouched. Cache is bounded by `onDidCloseTextDocument` eviction. Keep the fallback list in sync with `DIAGNOSTIC_ISSUE_TYPES` / `fallow/issueTypes` in `crates/lsp/src/main.rs` plus diagnostics emitted outside the issue-type catalog; vitest coverage flags drift.
 
 ## Settings
-`fallow.lspPath`, `fallow.autoDownload`, `fallow.issueTypes`, `fallow.duplication.threshold`, `fallow.duplication.mode`, `fallow.production`, `fallow.changedSince`, `fallow.trace.server`
+`fallow.lspPath`, `fallow.autoDownload`, `fallow.issueTypes`, `fallow.duplication.threshold`, `fallow.duplication.minOccurrences`, `fallow.duplication.mode`, `fallow.production`, `fallow.changedSince`, `fallow.trace.server`
 
 `fallow.changedSince` mirrors the CLI's `--changed-since`: when set to a git ref, the LSP scopes diagnostics (and the CLI-driven sidebar) to files changed since that ref. Forwarded via `initializationOptions.changedSince` and as `--changed-since <ref>` to the CLI in `commands.ts`. Empty string means full scope. Changing the setting restarts the LSP and re-runs the sidebar analysis.
 

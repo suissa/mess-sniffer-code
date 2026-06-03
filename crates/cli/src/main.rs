@@ -285,6 +285,10 @@ struct Cli {
     #[arg(long = "dupes-threshold", global = true)]
     dupes_threshold: Option<f64>,
 
+    /// Override the minimum clone occurrences in combined mode (must be >= 2).
+    #[arg(long = "dupes-min-occurrences", global = true, value_parser = parse_min_occurrences)]
+    dupes_min_occurrences: Option<usize>,
+
     /// Compute health score in combined mode.
     #[arg(long)]
     score: bool,
@@ -1889,6 +1893,8 @@ fn unsupported_security_global(cli: &Cli) -> Option<&'static str> {
         Some("--dupes-mode")
     } else if cli.dupes_threshold.is_some() {
         Some("--dupes-threshold")
+    } else if cli.dupes_min_occurrences.is_some() {
+        Some("--dupes-min-occurrences")
     } else if cli.include_entry_exports {
         Some("--include-entry-exports")
     } else {
@@ -2459,6 +2465,7 @@ fn dispatch_bare_command(dispatch: &DispatchContext<'_>) -> ExitCode {
         run_health,
         dupes_mode: cli.dupes_mode,
         dupes_threshold: cli.dupes_threshold,
+        dupes_min_occurrences: cli.dupes_min_occurrences,
         score: cli.score || cli.trend,
         trend: cli.trend,
         save_snapshot: cli.save_snapshot.as_ref(),

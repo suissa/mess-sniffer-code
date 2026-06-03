@@ -61,7 +61,8 @@ Mute state is stored in the workspace, so it survives reload but does not bleed 
 | `fallow.configPath` | `""` | Path to a Fallow config file. Relative paths are resolved from the workspace root (the first folder, in multi-root workspaces). Mirrors the CLI's `--config`; empty uses config auto-discovery. |
 | `fallow.autoDownload` | `true` | Automatically download the binary if not found. |
 | `fallow.issueTypes` | all enabled | Toggle individual issue types on/off. |
-| `fallow.duplication.threshold` | `5` | Minimum number of lines for a code block to be reported as a duplicate. |
+| `fallow.duplication.threshold` | `0` | Maximum allowed duplication percentage before the analysis is marked as failing. `0` (the default) means no limit. |
+| `fallow.duplication.minOccurrences` | `2` | Minimum number of occurrences before a clone group is reported. Defaults to `2` (every duplicated pair). Raise to `3`+ to focus on widespread copy-paste and skip context-sensitive pairs. |
 | `fallow.duplication.mode` | `"mild"` | Detection mode: `strict`, `mild`, `weak`, or `semantic`. |
 | `fallow.production` | `false` | Production mode: exclude test/dev files, only production scripts. |
 | `fallow.changedSince` | `""` | Git ref (tag, branch, or SHA) to scope the Problems panel and sidebar to files changed since that ref, mirroring the CLI's `--changed-since`. Tag your current commit (e.g. `fallow-baseline`) and set this to the tag to enforce "no new issues going forward" while ignoring pre-existing findings. |

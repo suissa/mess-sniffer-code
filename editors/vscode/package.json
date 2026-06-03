@@ -246,9 +246,15 @@
         },
         "fallow.duplication.threshold": {
           "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "description": "Minimum number of lines for a code block to be reported as a duplicate."
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum allowed duplication percentage before the analysis is marked as failing. Set to 0 (the default) for no limit."
+        },
+        "fallow.duplication.minOccurrences": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 2,
+          "description": "Minimum number of occurrences (instances of the same clone) before a group is reported. Defaults to 2 (every duplicated pair is reported). Raise to 3 or more to focus on widespread copy-paste worth refactoring and skip context-sensitive pairs."
         },
         "fallow.duplication.mode": {
           "type": "string",

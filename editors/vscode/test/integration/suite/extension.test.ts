@@ -142,7 +142,7 @@ describe("Fallow VS Code extension", () => {
     assert.ok(
       analysisCalls.every((entry) =>
         entry.args.join(" ") ===
-        "--format json --quiet --skip health --dupes-mode mild --dupes-threshold 5"
+        "--format json --quiet --skip health --dupes-mode mild --dupes-threshold 0 --dupes-min-occurrences 2"
       ),
       "combined analysis should pass the expected arguments"
     );
@@ -163,7 +163,7 @@ describe("Fallow VS Code extension", () => {
     assert.ok(
       analysisCalls.every((entry) =>
         entry.args.join(" ") ===
-        "--format json --quiet --skip health --changed-since origin/main --dupes-mode mild --dupes-threshold 5"
+        "--format json --quiet --skip health --changed-since origin/main --dupes-mode mild --dupes-threshold 0 --dupes-min-occurrences 2"
       ),
       "combined analysis should include --changed-since before duplication options"
     );

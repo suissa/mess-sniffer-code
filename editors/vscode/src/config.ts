@@ -51,10 +51,13 @@ export const getIssueTypes = (): IssueTypeConfig =>
   });
 
 export const getDuplicationThreshold = (): number =>
-  getConfig().get<number>("duplication.threshold", 5);
+  getConfig().get<number>("duplication.threshold", 0);
 
 export const getDuplicationMode = (): DuplicationMode =>
   getConfig().get<DuplicationMode>("duplication.mode", "mild");
+
+export const getDuplicationMinOccurrences = (): number =>
+  getConfig().get<number>("duplication.minOccurrences", 2);
 
 export const getProduction = (): boolean => getConfig().get<boolean>("production", false);
 

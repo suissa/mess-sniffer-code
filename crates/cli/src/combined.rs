@@ -40,6 +40,7 @@ pub struct CombinedOptions<'a> {
     pub run_health: bool,
     pub dupes_mode: Option<DupesMode>,
     pub dupes_threshold: Option<f64>,
+    pub dupes_min_occurrences: Option<usize>,
     pub score: bool,
     pub trend: bool,
     pub save_snapshot: Option<&'a Option<String>>,
@@ -862,7 +863,10 @@ fn run_combined_dupes(
         ),
         min_tokens: Some(dupes_cfg.min_tokens),
         min_lines: Some(dupes_cfg.min_lines),
-        min_occurrences: Some(dupes_cfg.min_occurrences),
+        min_occurrences: Some(
+            opts.dupes_min_occurrences
+                .unwrap_or(dupes_cfg.min_occurrences),
+        ),
         threshold: Some(opts.dupes_threshold.unwrap_or(dupes_cfg.threshold)),
         skip_local: dupes_cfg.skip_local,
         cross_language: dupes_cfg.cross_language,
