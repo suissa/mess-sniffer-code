@@ -10,7 +10,7 @@ import type { DuplicationMode, FallowCheckResult } from "./types.js";
  * front and, as a backstop, are the ONLY flags `planDegradation` will strip
  * after a spawn failure. Anything else that a binary rejects stays loud.
  */
-export const VERSION_GATED_FLAGS: Readonly<Record<string, string>> = {
+const VERSION_GATED_FLAGS: Readonly<Record<string, string>> = {
   "--dupes-min-occurrences": "2.88.0",
 };
 
