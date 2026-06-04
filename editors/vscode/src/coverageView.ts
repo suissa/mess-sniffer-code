@@ -5,6 +5,7 @@
 import * as vscode from "vscode";
 import {
   countCoverageItems,
+  formatConfidence,
   sortHotPaths,
   splitCleanupCandidates,
 } from "./coverage-utils.js";
@@ -63,7 +64,7 @@ const hotPathLeaf = (hot: RuntimeCoverageHotPath): CoverageLeafItem => {
 const findingLeaf = (finding: RuntimeCoverageFinding, candidateNote: string): CoverageLeafItem => {
   const { absolute } = resolveFilePath(finding.path);
   const invocations = finding.invocations ?? 0;
-  const tooltip = `${finding.function}\n${absolute}:${finding.line}\n${candidateNote}\nInvocations: ${invocations} · confidence: ${finding.confidence}`;
+  const tooltip = `${finding.function}\n${absolute}:${finding.line}\n${candidateNote}\nInvocations: ${invocations} · confidence: ${formatConfidence(finding.confidence)}`;
   const icon = finding.verdict === "safe_to_delete" ? "trash" : "eye";
   return new CoverageLeafItem(finding.function, finding.path, finding.line, icon, tooltip);
 };
@@ -103,7 +104,9 @@ export class RuntimeCoverageTreeProvider implements vscode.TreeDataProvider<Cove
     }
     const count = countCoverageItems(this.report);
     this.view.badge =
-      count > 0 ? { value: count, tooltip: `${count} runtime item${count === 1 ? "" : "s"}` } : undefined;
+      count > 0
+        ? { value: count, tooltip: `${count} runtime item${count === 1 ? "" : "s"}` }
+        : undefined;
   }
 
   getTreeItem(element: CoverageItem): vscode.TreeItem {

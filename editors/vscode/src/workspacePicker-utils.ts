@@ -64,9 +64,7 @@ export const parseWorkspacesOutput = (stdout: string): WorkspacesOutput | null =
 
   return {
     workspace_count:
-      typeof candidate.workspace_count === "number"
-        ? candidate.workspace_count
-        : workspaces.length,
+      typeof candidate.workspace_count === "number" ? candidate.workspace_count : workspaces.length,
     workspaces,
   };
 };
@@ -80,8 +78,8 @@ export const partitionWorkspaces = (
   workspaces: ReadonlyArray<WorkspaceInfo>,
 ): PartitionedWorkspaces => {
   const byName = (a: WorkspaceInfo, b: WorkspaceInfo): number => a.name.localeCompare(b.name);
-  const real = workspaces.filter((w) => !w.is_internal_dependency).slice().sort(byName);
-  const internal = workspaces.filter((w) => w.is_internal_dependency).slice().sort(byName);
+  const real = workspaces.filter((w) => !w.is_internal_dependency).toSorted(byName);
+  const internal = workspaces.filter((w) => w.is_internal_dependency).toSorted(byName);
   return { real, internal };
 };
 
