@@ -37,3 +37,21 @@ test("guardBrokenStdout rethrows non-EPIPE stdout errors (exit 1)", () => {
   assert.match(res.stderr, /Error: write ENOSPC/, "the rethrown error reaches stderr");
   assert.doesNotMatch(res.stderr, /is not a function/, "guard must be present, not absent");
 });
+
+test("isVersionQuery recognizes --version, -V, and -v as the first argument", () => {
+  const { isVersionQuery } = require(RUN_BINARY);
+  assert.equal(isVersionQuery(["node", "fallow", "--version"]), true);
+  assert.equal(isVersionQuery(["node", "fallow", "-V"]), true);
+  assert.equal(
+    isVersionQuery(["node", "fallow", "-v"]),
+    true,
+    "-v must append the verified line too",
+  );
+  assert.equal(isVersionQuery(["node", "fallow"]), false);
+  assert.equal(isVersionQuery(["node", "fallow", "dead-code"]), false);
+  assert.equal(
+    isVersionQuery(["node", "fallow", "dead-code", "-v"]),
+    false,
+    "-v only counts as the first arg",
+  );
+});

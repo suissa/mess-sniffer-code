@@ -29,10 +29,12 @@ function resolvePlatformPackageName() {
 }
 
 function isVersionQuery(argv) {
-  // clap registers both --version and -V on the root command.
+  // The root command answers all three version flags (--version, -V, and the
+  // TS/JS-toolchain-style -v), so the verified-status line must be appended for
+  // every one of them, not just --version / -V.
   const tail = argv.slice(2);
   if (tail.length === 0) return false;
-  return tail[0] === "--version" || tail[0] === "-V";
+  return tail[0] === "--version" || tail[0] === "-V" || tail[0] === "-v";
 }
 
 function describeVerified(result) {
