@@ -18,23 +18,33 @@ use crate::graph::{Edge, ImportedName};
 /// matching export in the source module.
 ///
 /// Returns `true` if any new references were added.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "propagation context is hot-path; threading a struct here would \
-              cost an extra borrow per re-export edge in barrel-heavy monorepos"
-)]
-pub(in crate::graph) fn propagate_star_re_export(
-    modules: &mut [ModuleNode],
-    edges: &[Edge],
-    edges_by_target: &rustc_hash::FxHashMap<FileId, Vec<usize>>,
-    barrel_id: FileId,
-    barrel_idx: usize,
-    source_id: FileId,
-    source_idx: usize,
-    entry_star_targets: &FxHashSet<FileId>,
-    triggering_is_type_only: bool,
-    synthetic_stubs: &mut FxHashSet<(FileId, String)>,
-) -> bool {
+pub(in crate::graph) struct StarReExportPropagation<'a> {
+    pub(in crate::graph) modules: &'a mut [ModuleNode],
+    pub(in crate::graph) edges: &'a [Edge],
+    pub(in crate::graph) edges_by_target: &'a FxHashMap<FileId, Vec<usize>>,
+    pub(in crate::graph) barrel_id: FileId,
+    pub(in crate::graph) barrel_idx: usize,
+    pub(in crate::graph) source_id: FileId,
+    pub(in crate::graph) source_idx: usize,
+    pub(in crate::graph) entry_star_targets: &'a FxHashSet<FileId>,
+    pub(in crate::graph) triggering_is_type_only: bool,
+    pub(in crate::graph) synthetic_stubs: &'a mut FxHashSet<(FileId, String)>,
+}
+
+pub(in crate::graph) fn propagate_star_re_export(input: StarReExportPropagation<'_>) -> bool {
+    let StarReExportPropagation {
+        modules,
+        edges,
+        edges_by_target,
+        barrel_id,
+        barrel_idx,
+        source_id,
+        source_idx,
+        entry_star_targets,
+        triggering_is_type_only,
+        synthetic_stubs,
+    } = input;
+
     if modules[barrel_idx].is_entry_point()
         || entry_star_targets.contains(&modules[barrel_idx].file_id)
     {
