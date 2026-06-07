@@ -25,15 +25,24 @@ fn apply_config_fixable_to_duplicate_exports(results: &mut AnalysisResults, conf
     }
 }
 
-pub(super) fn print_json(
-    results: &AnalysisResults,
-    root: &Path,
-    elapsed: Duration,
-    explain: bool,
-    regression: Option<&crate::regression::RegressionOutcome>,
-    baseline_matched: Option<(usize, usize)>,
-    config_fixable: bool,
-) -> ExitCode {
+pub(super) struct PrintJsonInput<'a> {
+    pub(super) results: &'a AnalysisResults,
+    pub(super) root: &'a Path,
+    pub(super) elapsed: Duration,
+    pub(super) explain: bool,
+    pub(super) regression: Option<&'a crate::regression::RegressionOutcome>,
+    pub(super) baseline_matched: Option<(usize, usize)>,
+    pub(super) config_fixable: bool,
+}
+
+pub(super) fn print_json(input: &PrintJsonInput<'_>) -> ExitCode {
+    let results = input.results;
+    let root = input.root;
+    let elapsed = input.elapsed;
+    let explain = input.explain;
+    let regression = input.regression;
+    let baseline_matched = input.baseline_matched;
+    let config_fixable = input.config_fixable;
     match build_json_with_config_fixable(results, root, elapsed, config_fixable) {
         Ok(mut output) => {
             if let Some(outcome) = regression

@@ -218,15 +218,15 @@ pub fn print_results(
             }
             ExitCode::SUCCESS
         }
-        OutputFormat::Json => json::print_json(
+        OutputFormat::Json => json::print_json(&json::PrintJsonInput {
             results,
-            ctx.root,
-            ctx.elapsed,
-            ctx.explain,
+            root: ctx.root,
+            elapsed: ctx.elapsed,
+            explain: ctx.explain,
             regression,
-            ctx.baseline_matched,
-            ctx.config_fixable,
-        ),
+            baseline_matched: ctx.baseline_matched,
+            config_fixable: ctx.config_fixable,
+        }),
         OutputFormat::Compact => {
             compact::print_compact(results, ctx.root);
             ExitCode::SUCCESS
