@@ -452,15 +452,7 @@ fn execute_health_inner(
 
     sort_findings(&mut findings, &opts.sort);
     let total_above_threshold = findings.len();
-
-    let (mut sev_critical, mut sev_high, mut sev_moderate) = (0usize, 0usize, 0usize);
-    for f in &findings {
-        match f.severity {
-            FindingSeverity::Critical => sev_critical += 1,
-            FindingSeverity::High => sev_high += 1,
-            FindingSeverity::Moderate => sev_moderate += 1,
-        }
-    }
+    let (sev_critical, sev_high, sev_moderate) = count_finding_severities(&findings);
 
     let loaded_baseline = if let Some(load_path) = opts.baseline {
         Some(load_health_baseline(
@@ -930,6 +922,18 @@ fn print_slow_churn_note(
             .dimmed()
         );
     }
+}
+
+fn count_finding_severities(findings: &[ComplexityViolation]) -> (usize, usize, usize) {
+    let (mut critical, mut high, mut moderate) = (0usize, 0usize, 0usize);
+    for finding in findings {
+        match finding.severity {
+            FindingSeverity::Critical => critical += 1,
+            FindingSeverity::High => high += 1,
+            FindingSeverity::Moderate => moderate += 1,
+        }
+    }
+    (critical, high, moderate)
 }
 
 /// Drop complexity findings whose function body span does NOT overlap any
