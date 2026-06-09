@@ -752,6 +752,12 @@ pub fn find_dead_code_full(
     }
 
     let declared_deps = collect_declared_dependency_names(config, pkg.as_ref(), workspaces);
+    let request_receivers = config
+        .security
+        .request_receivers
+        .iter()
+        .cloned()
+        .collect::<FxHashSet<_>>();
 
     if config.rules.security_client_server_leak != Severity::Off {
         let (security_findings, stats) =
@@ -775,9 +781,12 @@ pub fn find_dead_code_full(
             modules,
             &suppressions,
             &line_offsets_by_file,
-            &filter,
             &declared_deps,
-            &config.root,
+            &security::TaintedSinkContext {
+                category_filter: &filter,
+                request_receivers: &request_receivers,
+                root: &config.root,
+            },
         );
         results.security_findings.extend(sink_findings);
         results.security_unresolved_callee_sites = sink_stats.sinks_skipped_dynamic_callee;
@@ -841,6 +850,7 @@ pub fn find_dead_code_full(
             modules,
             &line_offsets_by_file,
             &declared_deps,
+            &request_receivers,
             &boundary_crossings,
             &mut results.security_findings,
         );
