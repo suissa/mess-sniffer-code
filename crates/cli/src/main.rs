@@ -3262,22 +3262,9 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
         }
         Command::Telemetry { .. } => unreachable!("handled before root validation"),
         Command::Coverage { subcommand } => dispatch_coverage_command(dispatch, subcommand),
-        Command::SetupHooks {
-            agent,
-            dry_run,
-            force,
-            user,
-            gitignore_claude,
-            uninstall,
-        } => setup_hooks::run_setup_hooks(&setup_hooks::SetupHooksOptions {
-            root,
-            agent,
-            dry_run,
-            force,
-            user,
-            gitignore_claude,
-            uninstall,
-        }),
+        setup_hooks @ Command::SetupHooks { .. } => {
+            dispatch_setup_hooks_command(setup_hooks, dispatch)
+        }
     }
 }
 
@@ -3334,6 +3321,30 @@ fn dispatch_coverage_command(dispatch: &DispatchContext<'_>, subcommand: Coverag
             explain: cli.explain,
         },
     )
+}
+
+fn dispatch_setup_hooks_command(command: Command, dispatch: &DispatchContext<'_>) -> ExitCode {
+    let Command::SetupHooks {
+        agent,
+        dry_run,
+        force,
+        user,
+        gitignore_claude,
+        uninstall,
+    } = command
+    else {
+        unreachable!("setup hooks dispatcher only handles setup-hooks commands");
+    };
+
+    setup_hooks::run_setup_hooks(&setup_hooks::SetupHooksOptions {
+        root: dispatch.root,
+        agent,
+        dry_run,
+        force,
+        user,
+        gitignore_claude,
+        uninstall,
+    })
 }
 
 fn dispatch_audit_command(command: Command, dispatch: &DispatchContext<'_>) -> ExitCode {
