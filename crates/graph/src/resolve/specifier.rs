@@ -1086,6 +1086,109 @@ pub(super) fn package_usage_name_for_external_bare_specifier(specifier: &str) ->
     is_valid_package_name(&package_name).then_some(package_name)
 }
 
+struct ResolvedPathContext<'ctx, 'resolve> {
+    ctx: &'resolve ResolveContext<'ctx>,
+    from_file: &'resolve Path,
+    specifier: &'resolve str,
+    from_style: bool,
+}
+
+impl ResolvedPathContext<'_, '_> {
+    fn resolve(&self, resolved_path: &Path) -> ResolveResult {
+        if let Some(&file_id) = self.ctx.raw_path_to_id.get(resolved_path) {
+            return ResolveResult::InternalModule(file_id);
+        }
+        if let Some(result) = self.bare_package_result(resolved_path) {
+            return result;
+        }
+
+        match dunce::canonicalize(resolved_path) {
+            Ok(canonical) => self.resolve_canonical_path(canonical),
+            Err(_) => self.resolve_uncanonicalized_path(resolved_path),
+        }
+    }
+
+    fn bare_package_result(&self, resolved_path: &Path) -> Option<ResolveResult> {
+        if !is_bare_specifier(self.specifier)
+            || resolved_path
+                .as_os_str()
+                .as_encoded_bytes()
+                .windows(7)
+                .any(|window| window == b"/.pnpm/" || window == b"\\.pnpm\\")
+        {
+            return None;
+        }
+        let pkg_name = package_usage_name_for_resolved_package(self.specifier, resolved_path)?;
+        if self.ctx.workspace_roots.contains_key(pkg_name.as_str()) {
+            return None;
+        }
+        Some(self.package_result_or_preserved_file(pkg_name, resolved_path))
+    }
+
+    fn resolve_canonical_path(&self, canonical: PathBuf) -> ResolveResult {
+        if let Some(&file_id) = self.ctx.path_to_id.get(canonical.as_path()) {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(fallback) = self.ctx.canonical_fallback
+            && let Some(file_id) = fallback.get(&canonical)
+        {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(file_id) = try_source_fallback(&canonical, self.ctx.path_to_id) {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(file_id) =
+            try_pnpm_workspace_fallback(&canonical, self.ctx.path_to_id, self.ctx.workspace_roots)
+        {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(result) = self.package_or_external_result(&canonical) {
+            result
+        } else {
+            ResolveResult::ExternalFile(canonical)
+        }
+    }
+
+    fn resolve_uncanonicalized_path(&self, resolved_path: &Path) -> ResolveResult {
+        if let Some(file_id) = try_source_fallback(resolved_path, self.ctx.path_to_id) {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(file_id) = try_pnpm_workspace_fallback(
+            resolved_path,
+            self.ctx.path_to_id,
+            self.ctx.workspace_roots,
+        ) {
+            ResolveResult::InternalModule(file_id)
+        } else if let Some(result) = self.package_or_external_result(resolved_path) {
+            result
+        } else {
+            ResolveResult::ExternalFile(resolved_path.to_path_buf())
+        }
+    }
+
+    fn package_or_external_result(&self, path: &Path) -> Option<ResolveResult> {
+        if let Some(pkg_name) = package_usage_name_for_resolved_package(self.specifier, path) {
+            if self.ctx.workspace_roots.contains_key(pkg_name.as_str())
+                && let Some(result) = try_workspace_package_fallback(self.ctx, self.specifier)
+            {
+                return Some(result);
+            }
+            return Some(self.package_result_or_preserved_file(pkg_name, path));
+        }
+
+        package_usage_name_for_external_bare_specifier(self.specifier)
+            .map(ResolveResult::NpmPackage)
+    }
+
+    fn package_result_or_preserved_file(&self, pkg_name: String, path: &Path) -> ResolveResult {
+        if should_preserve_node_modules_style_file(
+            self.specifier,
+            self.from_file,
+            path,
+            self.from_style,
+        ) {
+            ResolveResult::ExternalFile(path.to_path_buf())
+        } else {
+            ResolveResult::NpmPackage(pkg_name)
+        }
+    }
+}
+
 /// Resolve a single import specifier to a target.
 ///
 /// `from_style` is `true` for imports extracted from CSS contexts (currently
@@ -1232,101 +1335,13 @@ pub(super) fn resolve_specifier(
                     return ResolveResult::Unresolvable(specifier.to_string());
                 }
             }
-            if let Some(&file_id) = ctx.raw_path_to_id.get(resolved_path) {
-                return ResolveResult::InternalModule(file_id);
+            ResolvedPathContext {
+                ctx,
+                from_file,
+                specifier,
+                from_style,
             }
-
-            if is_bare
-                && !resolved_path
-                    .as_os_str()
-                    .as_encoded_bytes()
-                    .windows(7)
-                    .any(|w| w == b"/.pnpm/" || w == b"\\.pnpm\\")
-                && let Some(pkg_name) =
-                    package_usage_name_for_resolved_package(specifier, resolved_path)
-                && !ctx.workspace_roots.contains_key(pkg_name.as_str())
-            {
-                return if should_preserve_node_modules_style_file(
-                    specifier,
-                    from_file,
-                    resolved_path,
-                    from_style,
-                ) {
-                    ResolveResult::ExternalFile(resolved_path.to_path_buf())
-                } else {
-                    ResolveResult::NpmPackage(pkg_name)
-                };
-            }
-
-            match dunce::canonicalize(resolved_path) {
-                Ok(canonical) => {
-                    if let Some(&file_id) = ctx.path_to_id.get(canonical.as_path()) {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(fallback) = ctx.canonical_fallback
-                        && let Some(file_id) = fallback.get(&canonical)
-                    {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(file_id) = try_source_fallback(&canonical, ctx.path_to_id) {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(file_id) =
-                        try_pnpm_workspace_fallback(&canonical, ctx.path_to_id, ctx.workspace_roots)
-                    {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(pkg_name) =
-                        package_usage_name_for_resolved_package(specifier, &canonical)
-                    {
-                        if ctx.workspace_roots.contains_key(pkg_name.as_str())
-                            && let Some(result) = try_workspace_package_fallback(ctx, specifier)
-                        {
-                            return result;
-                        }
-                        if should_preserve_node_modules_style_file(
-                            specifier, from_file, &canonical, from_style,
-                        ) {
-                            ResolveResult::ExternalFile(canonical)
-                        } else {
-                            ResolveResult::NpmPackage(pkg_name)
-                        }
-                    } else if let Some(pkg_name) =
-                        package_usage_name_for_external_bare_specifier(specifier)
-                    {
-                        ResolveResult::NpmPackage(pkg_name)
-                    } else {
-                        ResolveResult::ExternalFile(canonical)
-                    }
-                }
-                Err(_) => {
-                    if let Some(file_id) = try_source_fallback(resolved_path, ctx.path_to_id) {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(file_id) = try_pnpm_workspace_fallback(
-                        resolved_path,
-                        ctx.path_to_id,
-                        ctx.workspace_roots,
-                    ) {
-                        ResolveResult::InternalModule(file_id)
-                    } else if let Some(pkg_name) =
-                        package_usage_name_for_resolved_package(specifier, resolved_path)
-                    {
-                        if ctx.workspace_roots.contains_key(pkg_name.as_str())
-                            && let Some(result) = try_workspace_package_fallback(ctx, specifier)
-                        {
-                            return result;
-                        }
-                        if should_preserve_node_modules_style_file(
-                            specifier,
-                            from_file,
-                            resolved_path,
-                            from_style,
-                        ) {
-                            ResolveResult::ExternalFile(resolved_path.to_path_buf())
-                        } else {
-                            ResolveResult::NpmPackage(pkg_name)
-                        }
-                    } else {
-                        ResolveResult::ExternalFile(resolved_path.to_path_buf())
-                    }
-                }
-            }
+            .resolve(resolved_path)
         }
         ResolveFileAttempt::Failed {
             used_tsconfig_fallback,
