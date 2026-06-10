@@ -112,11 +112,12 @@ Project inspection:
   impact         Show what fallow has done for you (opt-in, local-only)
 
 Setup and configuration:
-  init           Create a fallow config, optionally with a Git hook
-  migrate        Migrate knip or jscpd config to fallow
-  config         Show the resolved config and loaded config file
-  config-schema  Print the fallow config JSON Schema
-  plugin-schema  Print the external plugin JSON Schema
+  init              Create a fallow config, optionally with a Git hook
+  migrate           Migrate knip or jscpd config to fallow
+  config            Show the resolved config and loaded config file
+  config-schema     Print the fallow config JSON Schema
+  plugin-schema     Print the external plugin JSON Schema
+  rule-pack-schema  Print the rule pack JSON Schema
 
 Automation and CI:
   ci             Build PR/MR feedback envelopes
@@ -455,6 +456,10 @@ enum Command {
         #[arg(long)]
         boundary_violations: bool,
 
+        /// Only report rule-pack policy violations
+        #[arg(long)]
+        policy_violations: bool,
+
         /// Only report stale suppressions
         #[arg(long)]
         stale_suppressions: bool,
@@ -596,6 +601,9 @@ enum Command {
 
     /// Print the JSON Schema for external plugin files
     PluginSchema,
+
+    /// Print the JSON Schema for rule pack files
+    RulePackSchema,
 
     /// Show the resolved config and which config file was loaded
     ///
@@ -2492,6 +2500,9 @@ fn main() -> ExitCode {
     if matches!(cli.command, Some(Command::PluginSchema)) {
         return init::run_plugin_schema();
     }
+    if matches!(cli.command, Some(Command::RulePackSchema)) {
+        return init::run_rule_pack_schema();
+    }
 
     let fmt = resolve_format(&cli);
     if let Some(code) = run_telemetry_command_if_requested(&mut cli, fmt.output) {
@@ -2565,6 +2576,7 @@ fn main() -> ExitCode {
                 Command::Init { .. }
                     | Command::ConfigSchema
                     | Command::PluginSchema
+                    | Command::RulePackSchema
                     | Command::Schema
                     | Command::Explain { .. }
                     | Command::CiTemplate { .. }
@@ -3048,6 +3060,7 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
             circular_deps,
             re_export_cycles,
             boundary_violations,
+            policy_violations,
             stale_suppressions,
             unused_catalog_entries,
             empty_catalog_groups,
@@ -3077,6 +3090,7 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
                     circular_deps,
                     re_export_cycles,
                     boundary_violations,
+                    policy_violations,
                     stale_suppressions,
                     unused_catalog_entries,
                     empty_catalog_groups,
@@ -3124,6 +3138,7 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
         Command::Ci { subcommand } => ci::run(map_ci_subcommand(subcommand), output),
         Command::ConfigSchema => init::run_config_schema(),
         Command::PluginSchema => init::run_plugin_schema(),
+        Command::RulePackSchema => init::run_rule_pack_schema(),
         Command::CiTemplate { subcommand } => match subcommand {
             CiTemplateCli::Gitlab { vendor, force } => {
                 ci_template::run_gitlab_template(&ci_template::GitlabTemplateOptions {
@@ -3533,6 +3548,7 @@ fn telemetry_workflow_for_command(
             | Command::Hooks { .. }
             | Command::ConfigSchema
             | Command::PluginSchema
+            | Command::RulePackSchema
             | Command::Config { .. }
             | Command::CiTemplate { .. }
             | Command::Migrate { .. }
@@ -4364,6 +4380,10 @@ mod tests {
             ),
             (vec!["fallow", "config-schema"], telemetry::Workflow::Setup),
             (vec!["fallow", "plugin-schema"], telemetry::Workflow::Setup),
+            (
+                vec!["fallow", "rule-pack-schema"],
+                telemetry::Workflow::Setup,
+            ),
             (vec!["fallow", "config"], telemetry::Workflow::Setup),
             (
                 vec!["fallow", "ci-template", "gitlab"],
@@ -4456,6 +4476,7 @@ mod tests {
             "  config",
             "  config-schema",
             "  plugin-schema",
+            "  rule-pack-schema",
             "Automation and CI:",
             "  ci",
             "  ci-template",
