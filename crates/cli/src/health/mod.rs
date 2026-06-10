@@ -620,10 +620,10 @@ fn execute_health_inner(
         },
     );
 
-    let timings = if opts.performance {
-        let inner_ms = start.elapsed().as_secs_f64() * 1000.0;
-        let total_ms = config_ms + discover_ms + parse_ms + inner_ms;
-        Some(HealthTimings {
+    let timings = build_health_timings(
+        opts,
+        &start,
+        HealthTimingInput {
             config_ms,
             discover_ms,
             parse_ms,
@@ -635,12 +635,9 @@ fn execute_health_inner(
             hotspots_ms,
             duplication_ms,
             targets_ms,
-            total_ms,
             shared_parse,
-        })
-    } else {
-        None
-    };
+        },
+    );
 
     record_health_telemetry(&report, coverage_gaps_has_findings);
 
@@ -660,6 +657,49 @@ struct HealthCoverageSettings {
     report_coverage_gaps: bool,
     enforce_coverage_gaps: bool,
     istanbul_coverage: Option<scoring::IstanbulCoverage>,
+}
+
+struct HealthTimingInput {
+    config_ms: f64,
+    discover_ms: f64,
+    parse_ms: f64,
+    parse_cpu_ms: f64,
+    complexity_ms: f64,
+    file_scores_ms: f64,
+    git_churn_ms: f64,
+    git_churn_cache_hit: bool,
+    hotspots_ms: f64,
+    duplication_ms: f64,
+    targets_ms: f64,
+    shared_parse: bool,
+}
+
+fn build_health_timings(
+    opts: &HealthOptions<'_>,
+    start: &Instant,
+    input: HealthTimingInput,
+) -> Option<HealthTimings> {
+    if !opts.performance {
+        return None;
+    }
+
+    let inner_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let total_ms = input.config_ms + input.discover_ms + input.parse_ms + inner_ms;
+    Some(HealthTimings {
+        config_ms: input.config_ms,
+        discover_ms: input.discover_ms,
+        parse_ms: input.parse_ms,
+        parse_cpu_ms: input.parse_cpu_ms,
+        complexity_ms: input.complexity_ms,
+        file_scores_ms: input.file_scores_ms,
+        git_churn_ms: input.git_churn_ms,
+        git_churn_cache_hit: input.git_churn_cache_hit,
+        hotspots_ms: input.hotspots_ms,
+        duplication_ms: input.duplication_ms,
+        targets_ms: input.targets_ms,
+        total_ms,
+        shared_parse: input.shared_parse,
+    })
 }
 
 fn prepare_health_coverage_settings(
