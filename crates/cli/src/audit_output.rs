@@ -206,28 +206,28 @@ fn format_scope_line_parts(
 
 /// Print a dimmed vital-signs line summarizing warn-only findings.
 fn print_audit_vital_signs(result: &AuditResult) {
-    let mut parts = Vec::new();
-    parts.push(format!("dead code {}", result.summary.dead_code_issues));
-    if let Some(max) = result.summary.max_cyclomatic {
-        parts.push(format!(
-            "complexity {} (warn, max cyclomatic: {max})",
-            result.summary.complexity_findings
-        ));
-    } else {
-        parts.push(format!("complexity {}", result.summary.complexity_findings));
-    }
-    parts.push(format!(
-        "duplication {}",
-        result.summary.duplication_clone_groups
-    ));
-
-    let line = parts.join(" \u{00b7} ");
+    let line = build_vital_sign_parts(&result.summary).join(" \u{00b7} ");
     outln!(
         "{} {} {}",
         "\u{25a0}".dimmed(),
         "Metrics:".dimmed(),
         line.dimmed()
     );
+}
+
+fn build_vital_sign_parts(summary: &AuditSummary) -> Vec<String> {
+    let mut parts = Vec::new();
+    parts.push(format!("dead code {}", summary.dead_code_issues));
+    if let Some(max) = summary.max_cyclomatic {
+        parts.push(format!(
+            "complexity {} (warn, max cyclomatic: {max})",
+            summary.complexity_findings
+        ));
+    } else {
+        parts.push(format!("complexity {}", summary.complexity_findings));
+    }
+    parts.push(format!("duplication {}", summary.duplication_clone_groups));
+    parts
 }
 
 /// Build summary parts for the status line (shared between warn and fail).
@@ -534,7 +534,9 @@ fn build_audit_codeclimate(result: &AuditResult) -> serde_json::Value {
 mod tests {
     use crate::audit::AuditSummary;
 
-    use super::{build_status_parts, format_scope_line_parts, short_base_ref};
+    use super::{
+        build_status_parts, build_vital_sign_parts, format_scope_line_parts, short_base_ref,
+    };
 
     #[test]
     fn short_base_ref_abbreviates_full_sha() {
@@ -602,5 +604,45 @@ mod tests {
             duplication_clone_groups: 0,
         };
         assert!(build_status_parts(&empty).is_empty());
+    }
+
+    #[test]
+    fn build_vital_sign_parts_includes_warn_threshold_when_present() {
+        let summary = AuditSummary {
+            dead_code_issues: 0,
+            dead_code_has_errors: false,
+            complexity_findings: 2,
+            max_cyclomatic: Some(18),
+            duplication_clone_groups: 1,
+        };
+
+        assert_eq!(
+            build_vital_sign_parts(&summary),
+            vec![
+                "dead code 0".to_string(),
+                "complexity 2 (warn, max cyclomatic: 18)".to_string(),
+                "duplication 1".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_vital_sign_parts_omits_threshold_when_absent() {
+        let summary = AuditSummary {
+            dead_code_issues: 3,
+            dead_code_has_errors: false,
+            complexity_findings: 0,
+            max_cyclomatic: None,
+            duplication_clone_groups: 0,
+        };
+
+        assert_eq!(
+            build_vital_sign_parts(&summary),
+            vec![
+                "dead code 3".to_string(),
+                "complexity 0".to_string(),
+                "duplication 0".to_string(),
+            ]
+        );
     }
 }
