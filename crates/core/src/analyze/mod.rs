@@ -812,29 +812,7 @@ pub fn find_dead_code_full(
         ..AnalysisResults::default()
     };
 
-    let public_roots = public_workspace_roots(&config.public_packages, workspaces);
-    if !public_roots.is_empty() {
-        results.unused_exports.retain(|e| {
-            !public_roots
-                .iter()
-                .any(|root| e.export.path.starts_with(root))
-        });
-        results.unused_types.retain(|e| {
-            !public_roots
-                .iter()
-                .any(|root| e.export.path.starts_with(root))
-        });
-        results.unused_enum_members.retain(|e| {
-            !public_roots
-                .iter()
-                .any(|root| e.member.path.starts_with(root))
-        });
-        results.unused_class_members.retain(|e| {
-            !public_roots
-                .iter()
-                .any(|root| e.member.path.starts_with(root))
-        });
-    }
+    filter_public_workspace_results(config, workspaces, &mut results);
 
     let declared_deps = collect_declared_dependency_names(config, pkg.as_ref(), workspaces);
     let request_receivers = config
@@ -871,6 +849,37 @@ pub fn find_dead_code_full(
     results.sort();
 
     results
+}
+
+fn filter_public_workspace_results(
+    config: &ResolvedConfig,
+    workspaces: &[fallow_config::WorkspaceInfo],
+    results: &mut AnalysisResults,
+) {
+    let public_roots = public_workspace_roots(&config.public_packages, workspaces);
+    if public_roots.is_empty() {
+        return;
+    }
+    results.unused_exports.retain(|e| {
+        !public_roots
+            .iter()
+            .any(|root| e.export.path.starts_with(root))
+    });
+    results.unused_types.retain(|e| {
+        !public_roots
+            .iter()
+            .any(|root| e.export.path.starts_with(root))
+    });
+    results.unused_enum_members.retain(|e| {
+        !public_roots
+            .iter()
+            .any(|root| e.member.path.starts_with(root))
+    });
+    results.unused_class_members.retain(|e| {
+        !public_roots
+            .iter()
+            .any(|root| e.member.path.starts_with(root))
+    });
 }
 
 #[expect(
