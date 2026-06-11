@@ -418,7 +418,18 @@ pub fn rule_by_token(token: &str) -> Option<&'static RuleDef> {
 /// Return worked-example and fix guidance for a rule.
 #[must_use]
 pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
-    match rule.id {
+    source_dead_code_rule_guide(rule.id)
+        .or_else(|| member_import_rule_guide(rule.id))
+        .or_else(|| architecture_rule_guide(rule.id))
+        .or_else(|| catalog_rule_guide(rule.id))
+        .or_else(|| health_runtime_rule_guide(rule.id))
+        .or_else(|| duplication_rule_guide(rule.id))
+        .or_else(|| security_rule_guide(rule.id))
+        .unwrap_or_else(fallback_rule_guide)
+}
+
+fn source_dead_code_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/unused-file" => RuleGuide {
             example: "src/old-widget.ts is not imported by any entry point, route, script, or config file.",
             how_to_fix: "Delete the file if it is genuinely dead. If a framework loads it implicitly, add the right plugin/config pattern or mark it in alwaysUsed.",
@@ -449,6 +460,12 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "vitest is listed in dependencies, but only test files import it.",
             how_to_fix: "Move the package to devDependencies unless production code imports it at runtime.",
         },
+        _ => return None,
+    })
+}
+
+fn member_import_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/unused-enum-member" => RuleGuide {
             example: "Status.Legacy remains in an exported enum, but no code reads that member.",
             how_to_fix: "Remove the member after checking serialized/API compatibility, or suppress it with a reason when external data still uses it.",
@@ -469,6 +486,12 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "Button is exported from both src/ui/button.ts and src/components/button.ts.",
             how_to_fix: "Rename or consolidate the exports so consumers have one intentional import target.",
         },
+        _ => return None,
+    })
+}
+
+fn architecture_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/circular-dependency" => RuleGuide {
             example: "src/a.ts imports src/b.ts, and src/b.ts imports src/a.ts.",
             how_to_fix: "Extract shared code to a third module, invert the dependency, or split initialization-time side effects from type-only contracts.",
@@ -493,6 +516,12 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "// fallow-ignore-next-line unused-export remains above an export that is now used.",
             how_to_fix: "Remove the suppression. If a different issue is still intentional, replace it with a current, specific suppression.",
         },
+        _ => return None,
+    })
+}
+
+fn catalog_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/unused-catalog-entry" => RuleGuide {
             example: "pnpm-workspace.yaml declares `catalog: { is-even: ^1.0.0 }`, but no workspace package.json declares `\"is-even\": \"catalog:\"`.",
             how_to_fix: "Delete the entry from pnpm-workspace.yaml. If any consumer uses a hardcoded version (surfaced in `hardcoded_consumers`), switch that consumer to `catalog:` first to keep versions aligned.",
@@ -513,6 +542,12 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "pnpm-workspace.yaml declares `overrides: { \"@types/react@<<18\": \"18.0.0\" }`. The doubled `<<` is not a valid pnpm version selector and pnpm will reject the workspace at install time.",
             how_to_fix: "Fix the key/value to match pnpm's override grammar: bare names (`axios`), scoped names (`@types/react`), targets with version selectors (`@types/react@<18`), parent matchers (`react>react-dom`), and parent chains with selectors on either side. Allowed value idioms: bare version range, `-` (delete), `$ref`, and `npm:alias`. If the entry was experimental, remove it.",
         },
+        _ => return None,
+    })
+}
+
+fn health_runtime_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/high-cyclomatic-complexity"
         | "fallow/high-cognitive-complexity"
         | "fallow/high-complexity" => RuleGuide {
@@ -539,10 +574,22 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "Runtime coverage shows a function was never called, barely called, or could not be matched during the capture window.",
             how_to_fix: "Treat high-confidence cold static-dead code as delete candidates. For advisory or unavailable coverage, inspect seasonality, workers, source maps, and capture quality first.",
         },
+        _ => return None,
+    })
+}
+
+fn duplication_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "fallow/code-duplication" => RuleGuide {
             example: "Two files contain the same normalized token sequence across a multi-line block.",
             how_to_fix: "Extract the shared logic when the duplicated behavior should evolve together. Leave it duplicated when the similarity is accidental and likely to diverge.",
         },
+        _ => return None,
+    })
+}
+
+fn security_rule_guide(id: &str) -> Option<RuleGuide> {
+    Some(match id {
         "security/tainted-sink" => RuleGuide {
             example: "A non-literal request field reaches a catalogue sink such as security/sql-injection or security/dangerous-html. The finding is a candidate, not proof of exploitability.",
             how_to_fix: "Trace the source, sink, sanitization, and runtime context. Fix confirmed issues with parameterization, escaping, validation, or safer APIs, and suppress only reviewed false positives with context.",
@@ -559,10 +606,14 @@ pub fn rule_guide(rule: &RuleDef) -> RuleGuide {
             example: "A `fallow security` candidate uses this catalogue category as its SARIF rule id, for example security/sql-injection for a matched SQL sink.",
             how_to_fix: "Review the candidate trace before acting. Confirm attacker control, missing sanitization, and reachable runtime context, then fix with the category-appropriate safer API or add a reviewed suppression.",
         },
-        _ => RuleGuide {
-            example: "Run the relevant command with --format json --quiet --explain to inspect this rule in context.",
-            how_to_fix: "Use the issue action hints, source location, and docs URL to decide whether to remove, move, configure, or suppress the finding.",
-        },
+        _ => return None,
+    })
+}
+
+fn fallback_rule_guide() -> RuleGuide {
+    RuleGuide {
+        example: "Run the relevant command with --format json --quiet --explain to inspect this rule in context.",
+        how_to_fix: "Use the issue action hints, source location, and docs URL to decide whether to remove, move, configure, or suppress the finding.",
     }
 }
 
