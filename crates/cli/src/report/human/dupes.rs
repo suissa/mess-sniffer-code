@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use colored::Colorize;
-use fallow_core::duplicates::{CloneFingerprintSet, DuplicationReport};
+use fallow_core::duplicates::{CloneFamily, CloneFingerprintSet, CloneGroup, DuplicationReport};
 
 use super::{
     MAX_FLAT_ITEMS, format_path, plural, print_explain_tip_if_tty, split_dir_filename, thousands,
@@ -91,47 +91,76 @@ pub(in crate::report) fn build_duplication_human_lines(
     build_duplication_human_lines_with_explain(report, root, false)
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "report builder with grouped output formatting"
-)]
 fn build_duplication_human_lines_with_explain(
     report: &DuplicationReport,
     root: &Path,
     explain: bool,
 ) -> Vec<String> {
-    let mut lines = Vec::new();
+    DuplicationHumanBuilder {
+        lines: Vec::new(),
+        report,
+        root,
+        explain,
+    }
+    .build()
+}
 
-    if report.clone_groups.is_empty() && report.clone_families.is_empty() {
-        return lines;
+struct DuplicationHumanBuilder<'a> {
+    lines: Vec<String>,
+    report: &'a DuplicationReport,
+    root: &'a Path,
+    explain: bool,
+}
+
+impl DuplicationHumanBuilder<'_> {
+    fn build(mut self) -> Vec<String> {
+        if self.report.clone_groups.is_empty() && self.report.clone_families.is_empty() {
+            return self.lines;
+        }
+
+        let mut sorted_groups: Vec<&CloneGroup> = self.report.clone_groups.iter().collect();
+        sorted_groups.sort_by_key(|b| std::cmp::Reverse(b.line_count));
+        let fingerprints = CloneFingerprintSet::from_groups(&self.report.clone_groups);
+
+        self.push_clone_header(sorted_groups.len());
+        self.push_clone_groups(&sorted_groups, &fingerprints);
+        self.push_clone_footer(sorted_groups.len());
+
+        let (mirrored, non_mirrored) =
+            detect_mirrored_families(&self.report.clone_families, self.root);
+        self.push_mirrored_families(&mirrored);
+        self.push_multi_group_families(&non_mirrored);
+
+        self.lines
     }
 
-    let mut sorted_groups: Vec<&fallow_core::duplicates::CloneGroup> =
-        report.clone_groups.iter().collect();
-    sorted_groups.sort_by_key(|b| std::cmp::Reverse(b.line_count));
-    let fingerprints = CloneFingerprintSet::from_groups(&report.clone_groups);
-
-    let total_groups = sorted_groups.len();
-    let shown = total_groups.min(MAX_CLONE_GROUPS);
-
-    lines.push(format!(
-        "{} {}",
-        "\u{25cf}".cyan(),
-        format!("Duplicates ({total_groups} clone groups)")
-            .cyan()
-            .bold()
-    ));
-    if explain && let Some(rule) = crate::explain::rule_by_id("fallow/code-duplication") {
-        lines.push(format!(
-            "  {}",
-            format!("Description: {}", rule.full).dimmed()
+    fn push_clone_header(&mut self, total_groups: usize) {
+        self.lines.push(format!(
+            "{} {}",
+            "\u{25cf}".cyan(),
+            format!("Duplicates ({total_groups} clone groups)")
+                .cyan()
+                .bold()
         ));
+        if self.explain
+            && let Some(rule) = crate::explain::rule_by_id("fallow/code-duplication")
+        {
+            self.lines.push(format!(
+                "  {}",
+                format!("Description: {}", rule.full).dimmed()
+            ));
+        }
+        self.lines.push(String::new());
     }
-    lines.push(String::new());
 
-    for group in &sorted_groups[..shown] {
+    fn push_clone_groups(&mut self, groups: &[&CloneGroup], fingerprints: &CloneFingerprintSet) {
+        for group in &groups[..groups.len().min(MAX_CLONE_GROUPS)] {
+            self.push_clone_group(group, fingerprints);
+        }
+    }
+
+    fn push_clone_group(&mut self, group: &CloneGroup, fingerprints: &CloneFingerprintSet) {
         let instance_count = group.instances.len();
-
         let lc = group.line_count;
         let lc_str = format!("{:>5}", thousands(lc));
         let lc_colored = if lc > 1000 {
@@ -142,7 +171,7 @@ fn build_duplication_human_lines_with_explain(
             lc_str.dimmed().to_string()
         };
 
-        lines.push(format!(
+        self.lines.push(format!(
             "  {} lines  {} instance{}  {}",
             lc_colored,
             instance_count,
@@ -151,9 +180,9 @@ fn build_duplication_human_lines_with_explain(
         ));
 
         for instance in &group.instances {
-            let path_str = crate::report::format_display_path(&instance.file, root);
+            let path_str = crate::report::format_display_path(&instance.file, self.root);
             let (dir, filename) = split_dir_filename(&path_str);
-            lines.push(format!(
+            self.lines.push(format!(
                 "    {}{}:{}-{}",
                 dir.dimmed(),
                 filename,
@@ -161,58 +190,36 @@ fn build_duplication_human_lines_with_explain(
                 instance.end_line
             ));
         }
-        lines.push(String::new());
+        self.lines.push(String::new());
     }
 
-    if total_groups > MAX_CLONE_GROUPS {
-        lines.push(format!(
-            "  {}",
-            format!(
-                "... and {} more clone groups",
-                total_groups - MAX_CLONE_GROUPS
-            )
-            .dimmed()
-        ));
-    }
-    lines.push(format!(
-        "  {}",
-        format!("Identical code blocks detected via suffix-array analysis \u{2014} {DOCS_DUPLICATION}#clone-groups").dimmed()
-    ));
-    lines.push(String::new());
-
-    let (mirrored, non_mirrored) = detect_mirrored_families(&report.clone_families, root);
-
-    if !mirrored.is_empty() {
-        let shown_mirrors = mirrored.len().min(MAX_FLAT_ITEMS);
-        for mirror in &mirrored[..shown_mirrors] {
-            lines.push(format!(
-                "{} {}",
-                "\u{25cf}".yellow(),
+    fn push_clone_footer(&mut self, total_groups: usize) {
+        if total_groups > MAX_CLONE_GROUPS {
+            self.lines.push(format!(
+                "  {}",
                 format!(
-                    "Mirrored: {} \u{2194} {} ({} files, {} lines)",
-                    mirror.dir_a,
-                    mirror.dir_b,
-                    mirror.file_count,
-                    thousands(mirror.total_lines),
+                    "... and {} more clone groups",
+                    total_groups - MAX_CLONE_GROUPS
                 )
-                .yellow()
-                .bold()
+                .dimmed()
             ));
+        }
+        self.lines.push(format!(
+            "  {}",
+            format!("Identical code blocks detected via suffix-array analysis \u{2014} {DOCS_DUPLICATION}#clone-groups").dimmed()
+        ));
+        self.lines.push(String::new());
+    }
 
-            let shown = mirror.files.len().min(MAX_FLAT_ITEMS);
-            for filename in &mirror.files[..shown] {
-                lines.push(format!("  {}", filename.dimmed()));
-            }
-            if mirror.files.len() > MAX_FLAT_ITEMS {
-                lines.push(format!(
-                    "  {}",
-                    format!("... and {} more", mirror.files.len() - MAX_FLAT_ITEMS).dimmed()
-                ));
-            }
-            lines.push(String::new());
+    fn push_mirrored_families(&mut self, mirrored: &[MirroredDirs]) {
+        if mirrored.is_empty() {
+            return;
+        }
+        for mirror in &mirrored[..mirrored.len().min(MAX_FLAT_ITEMS)] {
+            self.push_mirror(mirror);
         }
         if mirrored.len() > MAX_FLAT_ITEMS {
-            lines.push(format!(
+            self.lines.push(format!(
                 "  {}",
                 format!(
                     "... and {} more mirrored pairs",
@@ -220,19 +227,51 @@ fn build_duplication_human_lines_with_explain(
                 )
                 .dimmed()
             ));
-            lines.push(String::new());
+            self.lines.push(String::new());
         }
-        lines.push(format!(
+        self.lines.push(format!(
             "  {}",
             format!("Directories containing identical file copies \u{2014} {DOCS_DUPLICATION}#clone-families").dimmed()
         ));
-        lines.push(String::new());
+        self.lines.push(String::new());
     }
 
-    let multi_group_families: Vec<_> = non_mirrored.iter().filter(|f| f.groups.len() > 1).collect();
+    fn push_mirror(&mut self, mirror: &MirroredDirs) {
+        self.lines.push(format!(
+            "{} {}",
+            "\u{25cf}".yellow(),
+            format!(
+                "Mirrored: {} \u{2194} {} ({} files, {} lines)",
+                mirror.dir_a,
+                mirror.dir_b,
+                mirror.file_count,
+                thousands(mirror.total_lines),
+            )
+            .yellow()
+            .bold()
+        ));
 
-    if !multi_group_families.is_empty() {
-        lines.push(format!(
+        for filename in &mirror.files[..mirror.files.len().min(MAX_FLAT_ITEMS)] {
+            self.lines.push(format!("  {}", filename.dimmed()));
+        }
+        if mirror.files.len() > MAX_FLAT_ITEMS {
+            self.lines.push(format!(
+                "  {}",
+                format!("... and {} more", mirror.files.len() - MAX_FLAT_ITEMS).dimmed()
+            ));
+        }
+        self.lines.push(String::new());
+    }
+
+    fn push_multi_group_families(&mut self, non_mirrored: &[&CloneFamily]) {
+        let multi_group_families: Vec<_> =
+            non_mirrored.iter().filter(|f| f.groups.len() > 1).collect();
+
+        if multi_group_families.is_empty() {
+            return;
+        }
+
+        self.lines.push(format!(
             "{} {}",
             "\u{25cf}".yellow(),
             format!(
@@ -242,37 +281,14 @@ fn build_duplication_human_lines_with_explain(
             .yellow()
             .bold()
         ));
-        lines.push(String::new());
+        self.lines.push(String::new());
 
-        let shown_families = multi_group_families.len().min(MAX_FLAT_ITEMS);
-        for family in &multi_group_families[..shown_families] {
-            let file_names: Vec<_> = family
-                .files
-                .iter()
-                .map(|f| {
-                    let path_str = crate::report::format_display_path(f, root);
-                    format_path(&path_str)
-                })
-                .collect();
-
-            lines.push(format!(
-                "  {} groups, {} lines across {}",
-                family.groups.len().to_string().bold(),
-                thousands(family.total_duplicated_lines).bold(),
-                file_names.join(", "),
-            ));
-
-            for suggestion in &family.suggestions {
-                lines.push(format!(
-                    "    {} {}",
-                    "\u{2192}".yellow(),
-                    suggestion.description.dimmed(),
-                ));
-            }
-            lines.push(String::new());
+        for family in &multi_group_families[..multi_group_families.len().min(MAX_FLAT_ITEMS)] {
+            self.push_multi_group_family(family);
         }
+
         if multi_group_families.len() > MAX_FLAT_ITEMS {
-            lines.push(format!(
+            self.lines.push(format!(
                 "  {}",
                 format!(
                     "... and {} more families",
@@ -280,16 +296,41 @@ fn build_duplication_human_lines_with_explain(
                 )
                 .dimmed()
             ));
-            lines.push(String::new());
+            self.lines.push(String::new());
         }
-        lines.push(format!(
+        self.lines.push(format!(
             "  {}",
             format!("Groups of related clones across the same files \u{2014} {DOCS_DUPLICATION}#clone-families").dimmed()
         ));
-        lines.push(String::new());
+        self.lines.push(String::new());
     }
 
-    lines
+    fn push_multi_group_family(&mut self, family: &CloneFamily) {
+        let file_names: Vec<_> = family
+            .files
+            .iter()
+            .map(|f| {
+                let path_str = crate::report::format_display_path(f, self.root);
+                format_path(&path_str)
+            })
+            .collect();
+
+        self.lines.push(format!(
+            "  {} groups, {} lines across {}",
+            family.groups.len().to_string().bold(),
+            thousands(family.total_duplicated_lines).bold(),
+            file_names.join(", "),
+        ));
+
+        for suggestion in &family.suggestions {
+            self.lines.push(format!(
+                "    {} {}",
+                "\u{2192}".yellow(),
+                suggestion.description.dimmed(),
+            ));
+        }
+        self.lines.push(String::new());
+    }
 }
 
 /// A detected mirrored directory pattern: two directory prefixes that contain
