@@ -1217,7 +1217,7 @@ fn count_stylesheet_kinds(
 }
 
 /// Collect every authored CSS class name defined anywhere in the project (plain
-/// and module `.css`/`.scss`, plus SFC `<style>` blocks of any scoping). The set
+/// and module `.css`/`.scss`, plus Astro/SFC `<style>` blocks of any scoping). The set
 /// is the typo-suggestion target for [`scan_unresolved_class_references`], so it
 /// is NOT narrowed by `changed_files` / `ws_roots`: a class defined in an
 /// unchanged file must still count as defined, or a markup token referencing it
@@ -1232,10 +1232,10 @@ fn collect_defined_css_classes(
     for file in files {
         let path = &file.path;
         let extension = path.extension().and_then(|ext| ext.to_str());
-        let is_scss = extension == Some("scss");
-        let is_css = extension == Some("css") || is_scss;
-        let is_sfc = matches!(extension, Some("vue") | Some("svelte"));
-        if !is_css && !is_sfc {
+        let is_preprocessor = matches!(extension, Some("scss" | "sass" | "less"));
+        let is_css = extension == Some("css") || is_preprocessor;
+        let has_style_blocks = matches!(extension, Some("astro" | "vue" | "svelte"));
+        if !is_css && !has_style_blocks {
             continue;
         }
         let relative = path.strip_prefix(&config.root).unwrap_or(path);
@@ -1245,15 +1245,23 @@ fn collect_defined_css_classes(
         let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
-        let css_source = if is_sfc {
-            match fallow_core::extract::sfc_virtual_stylesheet(&source) {
-                Some(virtual_css) => std::borrow::Cow::Owned(virtual_css),
-                None => continue,
+        if has_style_blocks {
+            for style in fallow_core::extract::extract_sfc_styles(&source) {
+                let is_style_scss = style
+                    .lang
+                    .as_deref()
+                    .is_some_and(|lang| matches!(lang, "scss" | "sass"));
+                for export in
+                    fallow_core::extract::extract_css_module_exports(&style.body, is_style_scss)
+                {
+                    if let ExportName::Named(name) = export.name {
+                        defined.insert(name);
+                    }
+                }
             }
-        } else {
-            std::borrow::Cow::Borrowed(source.as_str())
-        };
-        for export in fallow_core::extract::extract_css_module_exports(&css_source, is_scss) {
+            continue;
+        }
+        for export in fallow_core::extract::extract_css_module_exports(&source, is_preprocessor) {
             if let ExportName::Named(name) = export.name {
                 defined.insert(name);
             }

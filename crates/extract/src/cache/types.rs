@@ -422,7 +422,7 @@ use crate::MemberKind;
 /// from a real CSS AST (lightningcss) for standard CSS, so warm caches written
 /// by the regex-only extractor can differ on escaped class names and malformed
 /// at-rule preludes.
-pub(super) const CACHE_VERSION: u32 = 167;
+pub(super) const CACHE_VERSION: u32 = 168;
 
 /// Duplication token cache version. Bump when duplicate tokenization,
 /// normalization, or the on-disk token cache schema changes.

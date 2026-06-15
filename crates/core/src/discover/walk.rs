@@ -392,7 +392,7 @@ impl<'s> ignore::ParallelVisitorBuilder<'s> for FileVisitorBuilder<'s> {
 
 pub const SOURCE_EXTENSIONS: &[&str] = &[
     "ts", "tsx", "mts", "cts", "gts", "js", "jsx", "mjs", "cjs", "gjs", "vue", "svelte", "astro",
-    "mdx", "css", "scss", "html", "graphql", "gql",
+    "mdx", "css", "scss", "sass", "less", "html", "graphql", "gql",
 ];
 
 /// Glob patterns for test/dev/story files excluded in production mode.
@@ -626,6 +626,8 @@ mod tests {
     fn source_extensions_include_styles() {
         assert!(SOURCE_EXTENSIONS.contains(&"css"));
         assert!(SOURCE_EXTENSIONS.contains(&"scss"));
+        assert!(SOURCE_EXTENSIONS.contains(&"sass"));
+        assert!(SOURCE_EXTENSIONS.contains(&"less"));
     }
 
     #[test]

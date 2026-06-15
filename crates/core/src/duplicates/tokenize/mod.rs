@@ -58,7 +58,7 @@ fn tokenize_file_inner(
     if ext == "mdx" {
         return tokenize_mdx(source, strip_types, skip_imports, extract_mdx_statements);
     }
-    if ext == "css" || ext == "scss" {
+    if matches!(ext, "css" | "scss" | "sass" | "less") {
         return empty_tokens(source);
     }
 

@@ -78,7 +78,7 @@ static CSS_AT_RULE_PRELUDE_RE: LazyLock<regex::Regex> =
 pub(crate) fn is_css_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|ext| ext == "css" || ext == "scss")
+        .is_some_and(|ext| matches!(ext, "css" | "scss" | "sass" | "less"))
 }
 
 /// A CSS import source with both the literal source and fallow's resolver-normalized form.
@@ -683,7 +683,7 @@ pub(crate) fn parse_css_to_module(
     let is_scss = path
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|ext| ext == "scss");
+        .is_some_and(|ext| matches!(ext, "scss" | "sass" | "less"));
 
     let stripped = mask_css_comments(source, is_scss);
 
@@ -810,6 +810,16 @@ mod tests {
     }
 
     #[test]
+    fn is_css_file_sass() {
+        assert!(is_css_file(Path::new("styles.sass")));
+    }
+
+    #[test]
+    fn is_css_file_less() {
+        assert!(is_css_file(Path::new("styles.less")));
+    }
+
+    #[test]
     fn is_css_file_rejects_js() {
         assert!(!is_css_file(Path::new("app.js")));
     }
@@ -817,11 +827,6 @@ mod tests {
     #[test]
     fn is_css_file_rejects_ts() {
         assert!(!is_css_file(Path::new("app.ts")));
-    }
-
-    #[test]
-    fn is_css_file_rejects_less() {
-        assert!(!is_css_file(Path::new("styles.less")));
     }
 
     #[test]

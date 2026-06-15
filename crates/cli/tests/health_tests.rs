@@ -3008,6 +3008,62 @@ fn css_list_names(root: &std::path::Path, field: &str, name_key: &str) -> Vec<St
 }
 
 #[test]
+fn health_css_class_typo_credits_astro_style_blocks() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(&root.join("package.json"), r#"{"name":"astro-style"}"#);
+    write_file(
+        &root.join("src/Page.astro"),
+        "<p class=\"ssr-only\">SSR only content</p>\n<style>\n.sr-only { position: absolute; }\n.ssr-only { color: red; }\n</style>\n",
+    );
+
+    assert!(
+        css_list_names(root, "unresolved_class_references", "class").is_empty(),
+        "classes defined in Astro style blocks must suppress typo candidates"
+    );
+}
+
+#[test]
+fn health_css_class_typo_credits_sfc_scss_style_blocks() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(&root.join("package.json"), r#"{"name":"sfc-scss-style"}"#);
+    write_file(
+        &root.join("src/Component.svelte"),
+        "<h1 class=\"svelte-scss\">Svelte Scoped Scss</h1>\n<style lang=\"scss\">\n.svelte-css { color: blue; }\n.svelte-scss { color: red; }\n</style>\n",
+    );
+
+    assert!(
+        css_list_names(root, "unresolved_class_references", "class").is_empty(),
+        "classes defined in SFC SCSS style blocks must suppress typo candidates"
+    );
+}
+
+#[test]
+fn health_css_class_typo_credits_sass_stylesheets() {
+    let dir = tempdir().unwrap();
+    let root = dir.path();
+    write_file(&root.join("package.json"), r#"{"name":"sass-style"}"#);
+    write_file(
+        &root.join("src/suggest.css"),
+        ".react-scss-title { color: blue; }\n",
+    );
+    write_file(
+        &root.join("src/styles.sass"),
+        ".react-sass-title\n  color: red\n",
+    );
+    write_file(
+        &root.join("src/App.jsx"),
+        "export const App = () => <h1 className=\"react-sass-title\">Sass</h1>;\n",
+    );
+
+    assert!(
+        css_list_names(root, "unresolved_class_references", "class").is_empty(),
+        "classes defined in Sass stylesheets must suppress typo candidates"
+    );
+}
+
+#[test]
 fn health_css_keyframe_credited_by_tailwind_animate_and_js() {
     let dir = tempdir().unwrap();
     let root = dir.path();
