@@ -67,7 +67,7 @@ use misplaced_directive::find_misplaced_directives;
 use mixed_barrel::find_mixed_client_server_barrels;
 use re_export_cycles::find_re_export_cycles;
 use route_collision::find_route_collisions;
-use unprovided_inject::find_unprovided_injects;
+use unprovided_inject::{UnprovidedInjectInput, find_unprovided_injects};
 use unrendered_component::find_unrendered_components;
 #[expect(
     deprecated,
@@ -906,15 +906,15 @@ fn populate_unprovided_inject_findings(input: &mut FrameworkSpecificFindingsInpu
     if input.config.rules.unprovided_injects == Severity::Off {
         return;
     }
-    input.results.unprovided_injects = find_unprovided_injects(
-        input.graph,
-        input.resolved_modules,
-        input.modules,
-        input.declared_deps,
-        input.public_api_entry_points,
-        input.suppressions,
-        input.line_offsets_by_file,
-    )
+    input.results.unprovided_injects = find_unprovided_injects(UnprovidedInjectInput {
+        graph: input.graph,
+        resolved_modules: input.resolved_modules,
+        modules: input.modules,
+        declared_deps: input.declared_deps,
+        public_api_entry_points: input.public_api_entry_points,
+        suppressions: input.suppressions,
+        line_offsets_by_file: input.line_offsets_by_file,
+    })
     .into_iter()
     .map(UnprovidedInjectFinding::with_actions)
     .collect();
