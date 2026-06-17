@@ -143,6 +143,11 @@ pub_underscore_fields = "warn"           # Catch accidentally public _-prefixed 
 non_zero_suggestions = "warn"            # Suggest NonZero types for naturally non-zero values
 precedence_bits = "warn"                 # Catch bitwise operator precedence mistakes
 map_with_unused_argument_over_ranges = "warn" # Use `repeat`/`repeat_with` instead
+iter_on_single_items = "warn"          # Catch iterator use where a direct call is clearer
+redundant_clone = "warn"               # Catch avoidable clones before they reach hot paths
+significant_drop_in_scrutinee = "warn" # Catch temporaries dropped later than expected
+suspicious_operation_groupings = "warn" # Catch visually ambiguous arithmetic/bitwise grouping
+unused_peekable = "warn"               # Catch Peekable iterators that never peek
 
 # Process-spawn ban (method list lives in .clippy.toml). Allowed workspace-wide
 # so the CLI / MCP crates can spawn git worktrees, the coverage sidecar, and
@@ -183,6 +188,8 @@ use_self = "allow"                      # Too noisy with generics
 multiple_crate_versions = "allow"       # Transitive dependency version conflicts
 
 [workspace.lints.rust]
+absolute_paths_not_starting_with_crate = "warn" # Prefer crate/self/super paths inside crates
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(miri)'] }
 unsafe_code = "warn"
 unsafe_op_in_unsafe_fn = "warn"         # Require unsafe blocks even inside unsafe fn
 unused_unsafe = "warn"                  # Catch unnecessary unsafe blocks
@@ -196,6 +203,11 @@ debug = false
 
 [profile.test]
 debug = false
+
+# Release-like lint profile without the cost of full release codegen.
+[profile.dev-no-debug-assertions]
+inherits = "dev"
+debug-assertions = false
 
 # Optimize proc-macro crates in dev for faster compilation
 [profile.dev.package.serde_derive]
@@ -223,6 +235,16 @@ panic = "abort"                         # Smaller binary — no unwind tables ne
 inherits = "release"
 strip = "none"
 debug = "full"
+
+# Coverage profile for cargo-llvm-cov loops: preserve runtime checks while
+# avoiding full release build cost.
+[profile.coverage]
+inherits = "release"
+opt-level = 2
+codegen-units = 256
+lto = "thin"
+debug-assertions = true
+overflow-checks = true
 
 # Optimize heavy deps for size — not in the hot path
 [profile.release.package.regex-syntax]
