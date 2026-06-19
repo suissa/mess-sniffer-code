@@ -9,8 +9,8 @@ use oxc_span::Span;
 use crate::extract::{ImportInfo, ImportedName, parse_from_content};
 use crate::plugins::AggregatedPluginResult;
 use crate::resolve::{
-    ResolveAllImportsInput, ResolveResult, ResolvedImport, ResolvedModule,
-    extract_package_name_from_node_modules_path, resolve_all_imports,
+    ResolveAllImportsInput, ResolveResult, ResolvedImport, ResolvedModule, ResolverSession,
+    extract_package_name_from_node_modules_path, resolve_all_imports_with_session,
 };
 
 pub fn augment_external_style_package_usage(
@@ -169,10 +169,42 @@ fn is_storybook_static_dir_external_style(
     })
 }
 
+/// The project-level [`ResolveAllImportsInput`] fields shared by every
+/// per-stylesheet resolution: workspaces, active plugins, aliases, include
+/// paths, root, and conditions. `modules` / `files` default to empty and are
+/// overridden per call via functional-update syntax. The same value also seeds
+/// the reused [`ResolverSession`], so the session's project context always
+/// matches the per-call inputs.
+fn base_resolve_input<'a>(
+    config: &'a ResolvedConfig,
+    workspaces: &'a [WorkspaceInfo],
+    plugin_result: &'a AggregatedPluginResult,
+) -> ResolveAllImportsInput<'a> {
+    ResolveAllImportsInput {
+        modules: &[],
+        files: &[],
+        workspaces,
+        active_plugins: &plugin_result.active_plugins,
+        path_aliases: &plugin_result.path_aliases,
+        auto_imports: &[],
+        scss_include_paths: &plugin_result.scss_include_paths,
+        static_dir_mappings: &plugin_result.static_dir_mappings,
+        root: &config.root,
+        extra_conditions: &config.resolve.conditions,
+    }
+}
+
 struct ExternalStylePackageScanner<'a> {
     config: &'a ResolvedConfig,
     workspaces: &'a [WorkspaceInfo],
     plugin_result: &'a AggregatedPluginResult,
+    /// Resolver state built once for the project, reused for every per-stylesheet
+    /// resolution. The scanner resolves each node_modules stylesheet individually
+    /// (recursing through `@import` / `@use` chains), so rebuilding the resolver,
+    /// package manifests, and workspace canonicalization per file (the old
+    /// `resolve_all_imports` path) was redundant work proportional to the number
+    /// of external stylesheets.
+    session: ResolverSession,
     memo: FxHashMap<PathBuf, FxHashSet<String>>,
     visiting: FxHashSet<PathBuf>,
 }
@@ -183,10 +215,12 @@ impl<'a> ExternalStylePackageScanner<'a> {
         workspaces: &'a [WorkspaceInfo],
         plugin_result: &'a AggregatedPluginResult,
     ) -> Self {
+        let session = ResolverSession::new(&base_resolve_input(config, workspaces, plugin_result));
         Self {
             config,
             workspaces,
             plugin_result,
+            session,
             memo: FxHashMap::default(),
             visiting: FxHashSet::default(),
         }
@@ -231,18 +265,14 @@ impl<'a> ExternalStylePackageScanner<'a> {
             size_bytes: source.len() as u64,
         };
         let module = parse_from_content(FileId(0), canonical, source);
-        let resolved = resolve_all_imports(&ResolveAllImportsInput {
-            modules: &[module],
-            files: &[file],
-            workspaces: self.workspaces,
-            active_plugins: &self.plugin_result.active_plugins,
-            path_aliases: &self.plugin_result.path_aliases,
-            auto_imports: &[],
-            scss_include_paths: &self.plugin_result.scss_include_paths,
-            static_dir_mappings: &self.plugin_result.static_dir_mappings,
-            root: &self.config.root,
-            extra_conditions: &self.config.resolve.conditions,
-        });
+        let resolved = resolve_all_imports_with_session(
+            &ResolveAllImportsInput {
+                modules: &[module],
+                files: &[file],
+                ..base_resolve_input(self.config, self.workspaces, self.plugin_result)
+            },
+            &self.session,
+        );
 
         let Some(resolved_module) = resolved.first() else {
             return;

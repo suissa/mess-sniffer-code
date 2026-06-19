@@ -80,23 +80,91 @@ pub struct ResolveAllImportsInput<'a> {
     pub extra_conditions: &'a [String],
 }
 
+/// Reusable per-project resolver state: the resolver instances, package
+/// manifests, and workspace canonicalization that do not depend on the specific
+/// modules being resolved.
+///
+/// Building these is the bulk of `resolve_all_imports`'s non-parallel setup cost
+/// (workspace `dunce::canonicalize`, root + workspace `package.json` loads, and
+/// resolver construction). A caller that resolves many small inputs against the
+/// same project (the external-stylesheet scanner resolves dozens of node_modules
+/// stylesheets one file at a time) builds a session once and reuses it across
+/// every resolution instead of rebuilding this state per call.
+pub struct ResolverSession {
+    resolver: oxc_resolver::Resolver,
+    style_resolver: oxc_resolver::Resolver,
+    extensions: Vec<String>,
+    condition_names: Vec<String>,
+    package_manifests: Vec<PackageManifestInfo>,
+    canonical_ws_roots: Vec<PathBuf>,
+    root_is_canonical: bool,
+}
+
+impl ResolverSession {
+    /// Build the reusable resolver state for `input`'s project context (root,
+    /// workspaces, active plugins, and resolver conditions).
+    ///
+    /// The session is valid for any later [`resolve_all_imports_with_session`]
+    /// call whose input shares that project context; in particular the
+    /// `workspaces` slice must be the same (same entries and order) so workspace
+    /// names line up with the cached `canonical_ws_roots`.
+    #[must_use]
+    pub fn new(input: &ResolveAllImportsInput<'_>) -> Self {
+        let canonical_ws_roots: Vec<PathBuf> = input
+            .workspaces
+            .par_iter()
+            .map(|ws| dunce::canonicalize(&ws.root).unwrap_or_else(|_| ws.root.clone()))
+            .collect();
+        let package_manifests = build_package_manifests(input, &canonical_ws_roots);
+        let root_is_canonical = dunce::canonicalize(input.root).is_ok_and(|c| c == input.root);
+
+        let extensions = build_extensions(input.active_plugins);
+        let condition_names = build_condition_names(input.active_plugins, input.extra_conditions);
+        let resolver = create_resolver(input.active_plugins, input.extra_conditions);
+        let mut style_conditions = input.extra_conditions.to_vec();
+        style_conditions.push("sass".to_string());
+        style_conditions.push("style".to_string());
+        let style_resolver = create_resolver(input.active_plugins, &style_conditions);
+
+        Self {
+            resolver,
+            style_resolver,
+            extensions,
+            condition_names,
+            package_manifests,
+            canonical_ws_roots,
+            root_is_canonical,
+        }
+    }
+}
+
 /// Resolve all imports across all modules in parallel.
 #[must_use]
 pub fn resolve_all_imports(input: &ResolveAllImportsInput<'_>) -> Vec<ResolvedModule> {
-    let canonical_ws_roots: Vec<PathBuf> = input
-        .workspaces
-        .par_iter()
-        .map(|ws| dunce::canonicalize(&ws.root).unwrap_or_else(|_| ws.root.clone()))
-        .collect();
+    let session = ResolverSession::new(input);
+    resolve_all_imports_with_session(input, &session)
+}
+
+/// Resolve all imports for `input`, reusing a prebuilt [`ResolverSession`].
+///
+/// This is the single resolution code path; [`resolve_all_imports`] is the
+/// convenience wrapper that builds a fresh session first. `session` MUST have
+/// been built from an input with the same project context as `input` (same
+/// `root`, `workspaces` slice and order, `active_plugins`, and
+/// `extra_conditions`); only `modules` and `files` may differ.
+#[must_use]
+pub fn resolve_all_imports_with_session(
+    input: &ResolveAllImportsInput<'_>,
+    session: &ResolverSession,
+) -> Vec<ResolvedModule> {
     let workspace_roots: FxHashMap<&str, &Path> = input
         .workspaces
         .iter()
-        .zip(canonical_ws_roots.iter())
+        .zip(session.canonical_ws_roots.iter())
         .map(|(ws, canonical)| (ws.name.as_str(), canonical.as_path()))
         .collect();
-    let package_manifests = build_package_manifests(input, &canonical_ws_roots);
 
-    let root_is_canonical = dunce::canonicalize(input.root).is_ok_and(|c| c == input.root);
+    let root_is_canonical = session.root_is_canonical;
 
     let canonical_paths: Vec<PathBuf> = if root_is_canonical {
         Vec::new()
@@ -118,14 +186,6 @@ pub fn resolve_all_imports(input: &ResolveAllImportsInput<'_>) -> Vec<ResolvedMo
 
     let file_paths: Vec<&Path> = input.files.iter().map(|f| f.path.as_path()).collect();
 
-    let extensions = build_extensions(input.active_plugins);
-    let condition_names = build_condition_names(input.active_plugins, input.extra_conditions);
-    let resolver = create_resolver(input.active_plugins, input.extra_conditions);
-    let mut style_conditions = input.extra_conditions.to_vec();
-    style_conditions.push("sass".to_string());
-    style_conditions.push("style".to_string());
-    let style_resolver = create_resolver(input.active_plugins, &style_conditions);
-
     let canonical_fallback = if root_is_canonical {
         Some(types::CanonicalFallback::new(input.files))
     } else {
@@ -135,14 +195,14 @@ pub fn resolve_all_imports(input: &ResolveAllImportsInput<'_>) -> Vec<ResolvedMo
     let tsconfig_warned: Mutex<FxHashSet<String>> = Mutex::new(FxHashSet::default());
 
     let ctx = ResolveContext {
-        resolver: &resolver,
-        style_resolver: &style_resolver,
-        extensions: &extensions,
+        resolver: &session.resolver,
+        style_resolver: &session.style_resolver,
+        extensions: &session.extensions,
         path_to_id: &path_to_id,
         raw_path_to_id: &raw_path_to_id,
         workspace_roots: &workspace_roots,
-        package_manifests: &package_manifests,
-        condition_names: &condition_names,
+        package_manifests: &session.package_manifests,
+        condition_names: &session.condition_names,
         path_aliases: input.path_aliases,
         scss_include_paths: input.scss_include_paths,
         static_dir_mappings: input.static_dir_mappings,
