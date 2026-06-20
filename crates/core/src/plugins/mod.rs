@@ -2,7 +2,7 @@
 //!
 //! Unlike knip's JavaScript plugin system that evaluates config files at runtime,
 //! fallow's plugin system uses Oxc's parser to extract configuration values from
-//! JS/TS/JSON config files via AST walking — no JavaScript evaluation needed.
+//! JS/TS/JSON config files via AST walking, no JavaScript evaluation needed.
 //!
 //! Each plugin implements the [`Plugin`] trait with:
 //! - **Static defaults**: Entry patterns, config file patterns, used exports
@@ -802,7 +802,7 @@ pub trait Plugin: Send + Sync {
     ///
     /// Unresolved relative imports whose specifier ends with one of these suffixes
     /// will not be flagged as unresolved. For example, SvelteKit generates
-    /// `./$types` imports in route files — returning `"/$types"` suppresses those.
+    /// `./$types` imports in route files, returning `"/$types"` suppresses those.
     fn generated_import_patterns(&self) -> &'static [&'static str] {
         &[]
     }
@@ -874,7 +874,7 @@ pub trait Plugin: Send + Sync {
     /// Parse a config file's AST to discover additional entries, dependencies, etc.
     ///
     /// Called for each config file matching `config_patterns()`. The source code
-    /// and parsed AST are provided — use [`config_parser`] utilities to extract values.
+    /// and parsed AST are provided, use [`config_parser`] utilities to extract values.
     fn resolve_config(&self, _config_path: &Path, _source: &str, _root: &Path) -> PluginResult {
         PluginResult::default()
     }
@@ -1131,6 +1131,7 @@ macro_rules! define_plugin {
 }
 
 pub mod config_parser;
+mod manifest;
 pub mod registry;
 mod tooling;
 

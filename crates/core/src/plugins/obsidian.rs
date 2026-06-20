@@ -10,10 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use fallow_config::{ScopedUsedClassMemberRule, UsedClassMemberRule};
-use rustc_hash::FxHashSet;
 use serde_json::Value;
 
-use super::Plugin;
+use super::{Plugin, manifest::has_matching_manifest_json};
 
 const ENABLERS: &[&str] = &["obsidian"];
 const ENTRY_PATTERNS: &[&str] = &["src/main.{ts,js}", "main.{ts,js}", "cdp.js"];
@@ -53,24 +52,12 @@ impl Plugin for ObsidianPlugin {
             return true;
         }
 
-        manifest_candidates(root, discovered_files)
-            .into_iter()
-            // See browser_extension: outside production mode, only read the
-            // `manifest.json` files the discovery walk actually found instead of
-            // probing every candidate directory. In production (`None`) fall
-            // back to probing every candidate.
-            .filter(|path| match candidate_index {
-                Some(index) => path.parent().is_some_and(|dir| {
-                    index.dir_contains(dir, std::ffi::OsStr::new("manifest.json"))
-                }),
-                None => true,
-            })
-            .any(|path| {
-                let Ok(source) = std::fs::read_to_string(path) else {
-                    return false;
-                };
-                parse_manifest(&source).is_some_and(|manifest| is_obsidian_manifest(&manifest))
-            })
+        has_matching_manifest_json(
+            root,
+            discovered_files,
+            candidate_index,
+            is_obsidian_manifest,
+        )
     }
 
     fn entry_patterns(&self) -> &'static [&'static str] {
@@ -101,43 +88,6 @@ fn scoped_rule(extends: &str, members: &[&str]) -> UsedClassMemberRule {
         implements: None,
         members: members.iter().map(|member| (*member).to_string()).collect(),
     })
-}
-
-fn manifest_candidates(root: &Path, discovered_files: &[PathBuf]) -> Vec<PathBuf> {
-    let mut seen = FxHashSet::default();
-    let mut candidates = Vec::new();
-    push_manifest_candidate(root, &mut seen, &mut candidates);
-
-    for file in discovered_files {
-        let mut current = file.parent();
-        while let Some(dir) = current {
-            if !dir.starts_with(root) {
-                break;
-            }
-            push_manifest_candidate(dir, &mut seen, &mut candidates);
-            if dir == root {
-                break;
-            }
-            current = dir.parent();
-        }
-    }
-
-    candidates
-}
-
-fn push_manifest_candidate(
-    dir: &Path,
-    seen: &mut FxHashSet<PathBuf>,
-    candidates: &mut Vec<PathBuf>,
-) {
-    let candidate = dir.join("manifest.json");
-    if seen.insert(candidate.clone()) {
-        candidates.push(candidate);
-    }
-}
-
-fn parse_manifest(source: &str) -> Option<Value> {
-    serde_json::from_str(source).ok()
 }
 
 fn is_obsidian_manifest(manifest: &Value) -> bool {
