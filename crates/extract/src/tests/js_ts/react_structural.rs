@@ -44,6 +44,15 @@ fn jsx_spread_is_recorded() {
 }
 
 #[test]
+fn bare_props_passthrough_marks_thin_wrapper_candidate() {
+    let info = parse_tsx("const App = (props) => <Child {...props} />;");
+    let component = &info.component_functions[0];
+    assert!(component.is_pure_passthrough);
+    assert!(component.has_unharvestable_props);
+    assert!(info.react_props.is_empty());
+}
+
+#[test]
 fn host_element_wrapping_component_records_only_the_component() {
     let info = parse_tsx("export const App = () => <div><Child a=\"1\" /></div>;");
     assert_eq!(info.render_edges.len(), 1);

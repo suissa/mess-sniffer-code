@@ -294,76 +294,22 @@ impl ModuleInfoExtractor {
         has_rest_param: bool,
         body: Option<&FunctionBody<'_>>,
     ) {
-        let mark_unharvestable = |this: &mut Self| {
-            if let Some(component) = this.component_functions.last_mut() {
-                component.has_unharvestable_props = true;
-            }
-        };
-
-        // Thin-wrapper extraction (independent of the harvestable path below): a
-        // pure passthrough forwards a spread of its own props binding. The spread
-        // root can only be a bare-identifier props param (`(props) =>`) or an
-        // object-rest local (`({ a, ...rest }) =>`); a flat object destructure
-        // (`({ a, b }) =>`) has no single root to spread, so it never qualifies.
-        // Computed here because this is the one site with both the props binding
-        // shape and the component body in hand; the just-pushed component is
-        // `component_functions.last_mut()` (`begin_component` ran immediately
-        // before harvest). The bare-`props` signature also sets
-        // `has_unharvestable_props` below, but `<Child {...props}/>` is THE
-        // canonical thin wrapper, so the two flags are orthogonal.
-        if let Some(props_root) = passthrough_spread_root(first)
-            && body_is_pure_passthrough(body, &props_root)
-            && let Some(component) = self.component_functions.last_mut()
-        {
-            component.is_pure_passthrough = true;
-        }
+        self.mark_current_component_passthrough(first, body);
 
         if has_rest_param {
-            mark_unharvestable(self);
+            self.mark_current_component_unharvestable();
             return;
         }
         let Some(pattern) = first else {
             // Zero-parameter component: no props to harvest, nothing to abstain.
             return;
         };
-        let BindingPattern::ObjectPattern(obj) = pattern else {
-            // `props` bare identifier or an array pattern: not statically
-            // harvestable as named props (v1). A bare `props` identifier also
-            // covers the `forwardRef<T, Props>((props, ref) => ...)` /
-            // `memo((props) => ...)` imported-interface case the abstain ladder
-            // requires (ADR-001): the names live in an unresolvable type, so the
-            // signature carries a bare identifier, not an inline destructure.
-            mark_unharvestable(self);
+        let Some(harvested) = harvest_destructured_props(pattern) else {
+            self.mark_current_component_unharvestable();
             return;
         };
-        if obj.rest.is_some() {
-            // `{ a, ...rest }`: rest can carry any prop; abstain.
-            mark_unharvestable(self);
+        if harvested.is_empty() {
             return;
-        }
-
-        // Collect (declared-name, local-binding, span) for each statically
-        // harvestable prop. A computed / non-flat key abstains on the whole
-        // component (zero-FP doctrine: never guess a name we cannot read).
-        let mut harvested: Vec<(String, String, u32)> = Vec::new();
-        for prop in &obj.properties {
-            let key_name = match &prop.key {
-                PropertyKey::StaticIdentifier(id) => id.name.to_string(),
-                PropertyKey::StringLiteral(s) => s.value.to_string(),
-                _ => {
-                    // Computed key: cannot harvest the name; abstain on the
-                    // whole component to stay zero-FP.
-                    mark_unharvestable(self);
-                    return;
-                }
-            };
-            let Some(local) = binding_pattern_local_name(&prop.value) else {
-                // Nested destructure (`{ user: { name } }`): cannot flatten the
-                // local with confidence; abstain on the whole component.
-                mark_unharvestable(self);
-                return;
-            };
-            harvested.push((key_name, local, prop.span.start));
         }
 
         // Used-in-body: a destructured local with at least one resolved
@@ -374,17 +320,48 @@ impl ModuleInfoExtractor {
         // Both are computed in one body pass for all locals.
         let local_refs = harvested
             .iter()
-            .map(|(_, local, _)| local.as_str())
+            .map(|prop| prop.local.as_str())
             .collect::<Vec<_>>();
         let usage = resolve_body_local_usage(body, &local_refs);
+        self.push_harvested_react_props(component, harvested, &usage);
+    }
 
-        for (name, local, span_start) in harvested {
-            let used_in_script = usage.used.contains(local.as_str());
-            let used_outside_forward = usage.used_outside_forward.contains(local.as_str());
+    fn mark_current_component_unharvestable(&mut self) {
+        if let Some(component) = self.component_functions.last_mut() {
+            component.has_unharvestable_props = true;
+        }
+    }
+
+    /// Mark the current component as a pure props passthrough when the props
+    /// binding shape and body prove a single spread-forwarded child.
+    fn mark_current_component_passthrough(
+        &mut self,
+        first: Option<&BindingPattern<'_>>,
+        body: Option<&FunctionBody<'_>>,
+    ) {
+        if let Some(props_root) = passthrough_spread_root(first)
+            && body_is_pure_passthrough(body, &props_root)
+            && let Some(component) = self.component_functions.last_mut()
+        {
+            component.is_pure_passthrough = true;
+        }
+    }
+
+    fn push_harvested_react_props(
+        &mut self,
+        component: &str,
+        harvested: Vec<HarvestedReactProp>,
+        usage: &BodyLocalUsage,
+    ) {
+        for harvested in harvested {
+            let used_in_script = usage.used.contains(harvested.local.as_str());
+            let used_outside_forward = usage
+                .used_outside_forward
+                .contains(harvested.local.as_str());
             self.react_props.push(ComponentProp {
-                name,
-                local,
-                span_start,
+                name: harvested.name,
+                local: harvested.local,
+                span_start: harvested.span_start,
                 used_in_script,
                 // React has no template; always false (the struct is shared with
                 // Vue where this is the template-usage bit).
@@ -416,6 +393,41 @@ impl ModuleInfoExtractor {
 struct BodyLocalUsage {
     used: FxHashSet<String>,
     used_outside_forward: FxHashSet<String>,
+}
+
+struct HarvestedReactProp {
+    name: String,
+    local: String,
+    span_start: u32,
+}
+
+/// Collect statically harvestable props from an inline object destructure.
+///
+/// `None` means the component must abstain: bare `props`, array patterns, object
+/// rest, computed keys, and nested destructures can all hide prop names.
+fn harvest_destructured_props(pattern: &BindingPattern<'_>) -> Option<Vec<HarvestedReactProp>> {
+    let BindingPattern::ObjectPattern(obj) = pattern else {
+        return None;
+    };
+    if obj.rest.is_some() {
+        return None;
+    }
+
+    let mut harvested = Vec::new();
+    for prop in &obj.properties {
+        let key_name = match &prop.key {
+            PropertyKey::StaticIdentifier(id) => id.name.to_string(),
+            PropertyKey::StringLiteral(s) => s.value.to_string(),
+            _ => return None,
+        };
+        let local = binding_pattern_local_name(&prop.value)?;
+        harvested.push(HarvestedReactProp {
+            name: key_name,
+            local,
+            span_start: prop.span.start,
+        });
+    }
+    Some(harvested)
 }
 
 /// Compute, for each of `locals`, whether it is referenced anywhere in the
