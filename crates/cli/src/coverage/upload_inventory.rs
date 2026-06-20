@@ -17,11 +17,10 @@
 
 use std::fmt::{self, Write as _};
 use std::path::Path;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
-use fallow_config::{FallowConfig, ResolvedConfig};
+use fallow_config::ResolvedConfig;
 use fallow_core::extract::inventory::{InventoryEntry, walk_source};
-use fallow_core::git_env::clear_ambient_git_env;
 use fallow_cov_protocol::{FunctionIdentity, IdentityResolution, function_identity_id};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use rustc_hash::FxHashSet;
@@ -34,6 +33,7 @@ use crate::api::{
     parse_error_envelope, response_message_suffix, sanitize_network_error,
     try_api_agent_with_timeout,
 };
+use crate::coverage::upload_common;
 
 /// Log prefix used on every human-facing line from this subcommand.
 /// Matches the pattern `fallow license:` / `fallow coverage setup:` established
@@ -44,9 +44,6 @@ const LOG_PREFIX: &str = "fallow coverage upload-inventory";
 /// `fallow-cloud/src/services/inventory.ts`. Validated client-side so users
 /// see a specific error before a 400 round-trip.
 const INVENTORY_MAX_FUNCTIONS: usize = 200_000;
-
-/// Server-enforced `gitSha` length cap (inclusive).
-const GIT_SHA_MAX_LEN: usize = 64;
 
 /// HTTP timeouts for the upload. The body is small (<=200k function entries)
 /// but can take longer than license's 10s global cap on congested networks.
@@ -220,133 +217,12 @@ fn run_inner(args: &UploadInventoryArgs, root: &Path) -> Result<(), UploadError>
 }
 
 fn resolve_project_id(args: &UploadInventoryArgs, root: &Path) -> Result<String, UploadError> {
-    if let Some(explicit) = args.project_id.as_deref() {
-        return validate_project_id(explicit.trim()).map(str::to_owned);
-    }
-    if let Ok(github_repo) = std::env::var("GITHUB_REPOSITORY") {
-        let trimmed = github_repo.trim();
-        if !trimmed.is_empty() {
-            return validate_project_id(trimmed).map(str::to_owned);
-        }
-    }
-    if let Ok(gitlab_path) = std::env::var("CI_PROJECT_PATH") {
-        let trimmed = gitlab_path.trim();
-        if !trimmed.is_empty() {
-            return validate_project_id(trimmed).map(str::to_owned);
-        }
-    }
-    if let Some(from_remote) = git_origin_project_id(root) {
-        return Ok(from_remote);
-    }
-    Err(UploadError::Validation(
-        "could not determine project id. Pass --project-id <project-id>, or set \
-         $GITHUB_REPOSITORY / $CI_PROJECT_PATH, or ensure `git remote get-url origin` \
-         returns a recognizable URL."
-            .to_owned(),
-    ))
-}
-
-/// Validate the project identifier used as the `{repo}` URL segment.
-///
-/// The server accepts any non-empty string without path-traversal, whether
-/// bare (`fallow-cloud-api`) or slash-scoped (`acme/widgets`). Both shapes
-/// appear in real usage: the dogfood projects use bare names, while
-/// GitHub-origin parsing produces `owner/repo`. Keep validation minimal:
-/// reject only what the server or filesystem would reject (empty, `..`).
-fn validate_project_id(id: &str) -> Result<&str, UploadError> {
-    if id.is_empty() {
-        return Err(UploadError::Validation("project id is empty".to_owned()));
-    }
-    if id.contains("..") {
-        return Err(UploadError::Validation(
-            "project id must not contain '..' path segments".to_owned(),
-        ));
-    }
-    Ok(id)
-}
-
-fn git_origin_project_id(root: &Path) -> Option<String> {
-    let mut command = Command::new("git");
-    command
-        .args(["remote", "get-url", "origin"])
-        .current_dir(root);
-    clear_ambient_git_env(&mut command);
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    parse_git_remote_to_project_id(&url)
-}
-
-/// Parse common git remote URL shapes into `owner/repo`. Covers HTTPS
-/// (`https://github.com/owner/repo(.git)?`), SSH
-/// (`git@github.com:owner/repo(.git)?`), and `ssh://` / `git://` variants.
-fn parse_git_remote_to_project_id(url: &str) -> Option<String> {
-    let stripped_suffix = url.trim().trim_end_matches(".git");
-    if let Some((_, path)) = stripped_suffix.split_once(':')
-        && let Some(project_id) = take_last_two_segments(path)
-    {
-        return Some(project_id);
-    }
-    if let Some(path_part) = stripped_suffix.split("://").nth(1)
-        && let Some((_, tail)) = path_part.split_once('/')
-        && let Some(project_id) = take_last_two_segments(tail)
-    {
-        return Some(project_id);
-    }
-    None
-}
-
-fn take_last_two_segments(path: &str) -> Option<String> {
-    let mut parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let repo = parts.pop()?;
-    let owner = parts.pop()?;
-    Some(format!("{owner}/{repo}"))
+    upload_common::resolve_project_id(args.project_id.as_deref(), root)
+        .map_err(UploadError::Validation)
 }
 
 fn resolve_git_sha(args: &UploadInventoryArgs, root: &Path) -> Result<String, UploadError> {
-    let sha = if let Some(explicit) = args.git_sha.as_deref() {
-        explicit.trim().to_owned()
-    } else {
-        let mut command = Command::new("git");
-        command.args(["rev-parse", "HEAD"]).current_dir(root);
-        clear_ambient_git_env(&mut command);
-        let output = command.output().map_err(|err| {
-            UploadError::Validation(format!(
-                "could not resolve git SHA: {err}. Pass --git-sha <sha> explicitly."
-            ))
-        })?;
-        if !output.status.success() {
-            return Err(UploadError::Validation(
-                "`git rev-parse HEAD` failed. Pass --git-sha <sha> explicitly.".to_owned(),
-            ));
-        }
-        String::from_utf8_lossy(&output.stdout).trim().to_owned()
-    };
-
-    if sha.is_empty() {
-        return Err(UploadError::Validation("git sha is empty".to_owned()));
-    }
-    if sha.len() > GIT_SHA_MAX_LEN {
-        return Err(UploadError::Validation(format!(
-            "git sha is {} chars, server limit is {}",
-            sha.len(),
-            GIT_SHA_MAX_LEN
-        )));
-    }
-    if !sha
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    {
-        return Err(UploadError::Validation(format!(
-            "git sha '{sha}' contains characters outside [A-Za-z0-9._-]"
-        )));
-    }
-    Ok(sha)
+    upload_common::resolve_git_sha(args.git_sha.as_deref(), root).map_err(UploadError::Validation)
 }
 
 fn enforce_clean_worktree(args: &UploadInventoryArgs, root: &Path) -> Result<(), UploadError> {
@@ -367,34 +243,11 @@ fn enforce_clean_worktree(args: &UploadInventoryArgs, root: &Path) -> Result<(),
 }
 
 fn dirty_worktree(root: &Path) -> bool {
-    let mut command = Command::new("git");
-    command.args(["status", "--porcelain"]).current_dir(root);
-    clear_ambient_git_env(&mut command);
-    let Ok(output) = command.output() else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    output.stdout.iter().any(|b| !b.is_ascii_whitespace())
+    upload_common::dirty_worktree(root)
 }
 
 fn load_resolved_config(root: &Path) -> Result<ResolvedConfig, UploadError> {
-    let user_config = match FallowConfig::find_and_load(root) {
-        Ok(Some((config, _path))) => Some(config),
-        Ok(None) => None,
-        Err(e) => return Err(UploadError::Validation(format!("config load failed: {e}"))),
-    };
-    let config = user_config.unwrap_or_default();
-    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
-    Ok(config.resolve(
-        root.to_path_buf(),
-        fallow_config::OutputFormat::Human,
-        threads,
-        /* no_cache */ true,
-        /* quiet */ true,
-        /* cache_max_size_mb */ None,
-    ))
+    upload_common::load_resolved_config(root).map_err(UploadError::Validation)
 }
 
 fn compile_exclude_matcher(patterns: &[String]) -> Result<GlobSet, UploadError> {
@@ -891,7 +744,11 @@ fn count_digits(mut n: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coverage::upload_common::{
+        GIT_SHA_MAX_LEN, parse_git_remote_to_project_id, validate_project_id,
+    };
     use std::path::PathBuf;
+    use std::process::Command;
     use tempfile::TempDir;
 
     #[test]
