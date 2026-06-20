@@ -116,11 +116,15 @@ fn parse_source_to_module_inner(
     );
 
     apply_jsx_retry_or_jsdoc(
-        path,
-        parser_source,
-        source_type,
-        need_complexity,
-        &line_offsets,
+        &JsxRetryOrJsdocInput {
+            path,
+            parser_source,
+            source_type,
+            need_complexity,
+            line_offsets: &line_offsets,
+            comments: &parser_return.program.comments,
+            source,
+        },
         &mut ParseOutputs {
             extractor: &mut extractor,
             semantic_usage: &mut semantic_usage,
@@ -128,11 +132,9 @@ fn parse_source_to_module_inner(
             flag_uses: &mut flag_uses,
             parsed_suppressions: &mut parsed_suppressions,
         },
-        &parser_return.program.comments,
-        source,
     );
 
-    assemble_module_info(
+    assemble_module_info(ModuleAssemblyInput {
         extractor,
         file_id,
         content_hash,
@@ -141,7 +143,29 @@ fn parse_source_to_module_inner(
         line_offsets,
         complexity,
         flag_uses,
-    )
+    })
+}
+
+/// Inputs shared by the JSX retry and the fallback JSDoc enrichment pass.
+struct JsxRetryOrJsdocInput<'a> {
+    path: &'a Path,
+    parser_source: &'a str,
+    source_type: SourceType,
+    need_complexity: bool,
+    line_offsets: &'a [u32],
+    comments: &'a [Comment],
+    source: &'a str,
+}
+
+struct ModuleAssemblyInput {
+    extractor: ModuleInfoExtractor,
+    file_id: FileId,
+    content_hash: u64,
+    parsed_suppressions: crate::suppress::ParsedSuppressions,
+    semantic_usage: SemanticUsage,
+    line_offsets: Vec<u32>,
+    complexity: Vec<FunctionComplexity>,
+    flag_uses: Vec<FlagUse>,
 }
 
 /// Build the primary extractor: run the AST walk (JSX-gated), fold in Glimmer
@@ -207,33 +231,20 @@ struct ParseOutputs<'a> {
 /// Run the JSX retry parse: when it improves extraction, overwrite every
 /// primary-parse output in place; otherwise apply JSDoc tags to the primary
 /// extractor. The retry's own parse already applies JSDoc tags.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "threads the retry inputs plus the primary-parse outputs to overwrite in place"
-)]
-fn apply_jsx_retry_or_jsdoc(
-    path: &Path,
-    parser_source: &str,
-    source_type: SourceType,
-    need_complexity: bool,
-    line_offsets: &[u32],
-    outputs: &mut ParseOutputs<'_>,
-    comments: &[Comment],
-    source: &str,
-) {
+fn apply_jsx_retry_or_jsdoc(input: &JsxRetryOrJsdocInput<'_>, outputs: &mut ParseOutputs<'_>) {
     let retry_input = JsxRetryInput {
-        path,
-        source,
-        parser_source,
-        source_type,
+        path: input.path,
+        source: input.source,
+        parser_source: input.parser_source,
+        source_type: input.source_type,
         total_extracted: outputs.extractor.exports.len()
             + outputs.extractor.imports.len()
             + outputs.extractor.re_exports.len(),
-        need_complexity,
-        line_offsets,
+        need_complexity: input.need_complexity,
+        line_offsets: input.line_offsets,
     };
     let Some(retry) = parse_with_jsx_retry(&retry_input) else {
-        apply_jsdoc_tags_to_extractor(&mut *outputs.extractor, comments, source);
+        apply_jsdoc_tags_to_extractor(&mut *outputs.extractor, input.comments, input.source);
         return;
     };
     *outputs.extractor = retry.extractor;
@@ -256,20 +267,17 @@ fn apply_jsdoc_tags_to_extractor(
 
 /// Convert the finalized extractor into a `ModuleInfo`, attaching semantic-usage,
 /// line-offset, complexity, and flag-use side data.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "assembly step threads the independently-computed parse outputs onto ModuleInfo"
-)]
-fn assemble_module_info(
-    extractor: ModuleInfoExtractor,
-    file_id: FileId,
-    content_hash: u64,
-    parsed_suppressions: crate::suppress::ParsedSuppressions,
-    semantic_usage: SemanticUsage,
-    line_offsets: Vec<u32>,
-    complexity: Vec<FunctionComplexity>,
-    flag_uses: Vec<FlagUse>,
-) -> ModuleInfo {
+fn assemble_module_info(input: ModuleAssemblyInput) -> ModuleInfo {
+    let ModuleAssemblyInput {
+        extractor,
+        file_id,
+        content_hash,
+        parsed_suppressions,
+        semantic_usage,
+        line_offsets,
+        complexity,
+        flag_uses,
+    } = input;
     let mut info = extractor.into_module_info(file_id, content_hash, parsed_suppressions);
     info.unused_import_bindings = semantic_usage.import_binding_usage.unused;
     info.type_referenced_import_bindings = semantic_usage.import_binding_usage.type_referenced;
