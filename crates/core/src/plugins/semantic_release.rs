@@ -33,12 +33,7 @@ define_plugin! {
     tooling_dependencies: TOOLING_DEPENDENCIES,
     resolve_config(config_path, source, _root) {
         let mut result = PluginResult::default();
-
-        let imports = config_parser::extract_imports(source, config_path);
-        for imp in &imports {
-            let dep = crate::resolve::extract_package_name(imp);
-            result.referenced_dependencies.push(dep);
-        }
+        super::add_import_referenced_dependencies(&mut result, source, config_path);
 
         let plugins = config_parser::extract_config_shallow_strings(source, config_path, "plugins");
         for plugin in &plugins {

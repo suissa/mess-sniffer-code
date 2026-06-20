@@ -1011,11 +1011,11 @@ macro_rules! define_plugin {
                 _root: &std::path::Path,
             ) -> PluginResult {
                 let mut result = PluginResult::default();
-                let imports = crate::plugins::config_parser::extract_imports(source, config_path);
-                for imp in &imports {
-                    let dep = crate::resolve::extract_package_name(imp);
-                    result.referenced_dependencies.push(dep);
-                }
+                crate::plugins::add_import_referenced_dependencies(
+                    &mut result,
+                    source,
+                    config_path,
+                );
                 result
             }
         }
@@ -1137,6 +1137,15 @@ mod tooling;
 
 pub use registry::{AggregatedPluginResult, PluginRegistry};
 pub use tooling::is_known_tooling_dependency;
+
+fn add_import_referenced_dependencies(result: &mut PluginResult, source: &str, config_path: &Path) {
+    let imports = config_parser::extract_imports(source, config_path);
+    for import in &imports {
+        result
+            .referenced_dependencies
+            .push(crate::resolve::extract_package_name(import));
+    }
+}
 
 mod adonis;
 mod angular;
