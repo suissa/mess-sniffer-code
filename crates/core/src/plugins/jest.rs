@@ -131,15 +131,25 @@ fn extract_jest_config(
         return;
     }
     extract_jest_inline_projects(&parse_source, parse_path, root, result);
-    extract_jest_string_projects(
-        &parse_source,
+    extract_jest_string_projects(JestStringProjectsInput {
+        parse_source: &parse_source,
         parse_path,
         config_path,
         root,
         result,
         visited,
         depth,
-    );
+    });
+}
+
+struct JestStringProjectsInput<'a> {
+    parse_source: &'a str,
+    parse_path: &'a Path,
+    config_path: &'a Path,
+    root: &'a Path,
+    result: &'a mut PluginResult,
+    visited: &'a mut FxHashSet<PathBuf>,
+    depth: usize,
 }
 
 /// Resolve string-shaped `projects:` entries to concrete child configs, parse
@@ -147,15 +157,16 @@ fn extract_jest_config(
 ///
 /// Child `replace_entry_patterns` / `testMatch` flags are intentionally not
 /// merged: Jest scopes those per-project. See the leak-guard test.
-fn extract_jest_string_projects(
-    parse_source: &str,
-    parse_path: &Path,
-    config_path: &Path,
-    root: &Path,
-    result: &mut PluginResult,
-    visited: &mut FxHashSet<PathBuf>,
-    depth: usize,
-) {
+fn extract_jest_string_projects(input: JestStringProjectsInput<'_>) {
+    let JestStringProjectsInput {
+        parse_source,
+        parse_path,
+        config_path,
+        root,
+        result,
+        visited,
+        depth,
+    } = input;
     let project_entries =
         config_parser::extract_config_string_array(parse_source, parse_path, &["projects"]);
     for entry in &project_entries {
