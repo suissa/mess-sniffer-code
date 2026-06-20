@@ -29,6 +29,7 @@ use super::ModuleGraph;
 use super::narrowing::{
     create_synthetic_exports_for_star_re_exports, mark_member_exports_referenced,
 };
+use super::re_export_reachability::enumerate_reachable_barrels;
 use super::types::ReferenceKind;
 
 /// One credit operation collected during the scan and applied after the loop
@@ -75,7 +76,7 @@ fn collect_pending_credits(
                 continue;
             };
             let reachable =
-                enumerate_alias_reachable_barrels(graph, alias_file_id, &alias.via_export_name);
+                enumerate_reachable_barrels(graph, alias_file_id, &alias.via_export_name);
             collect_credits_for_alias(NamespaceCreditInput {
                 graph,
                 module_by_id,
@@ -89,55 +90,6 @@ fn collect_pending_credits(
     }
 
     pending
-}
-
-/// Walk re-export edges forward from `(alias_file_id, via_export_name)` and
-/// return every `(barrel_file_id, exported_name_at_barrel)` pair through which
-/// the alias is reachable. Includes the seed pair so a consumer importing
-/// directly from the alias-defining file still matches.
-///
-/// Edge cases:
-/// - Renamed re-exports (`export { A as B } from './src'`) yield
-///   `(barrel, "B")` even though the source name is `"A"`.
-/// - Star re-exports (`export * from './src'`) propagate every reachable name
-///   unchanged; the source's name `"A"` is reachable at the barrel as `"A"`.
-/// - Cycles are bounded by the visited set.
-fn enumerate_alias_reachable_barrels(
-    graph: &ModuleGraph,
-    alias_file_id: FileId,
-    via_export_name: &str,
-) -> FxHashSet<(FileId, String)> {
-    let mut reachable: FxHashSet<(FileId, String)> = FxHashSet::default();
-    reachable.insert((alias_file_id, via_export_name.to_string()));
-    let mut frontier: Vec<(FileId, String)> = vec![(alias_file_id, via_export_name.to_string())];
-
-    while let Some((source_file, source_name)) = frontier.pop() {
-        for (idx, module) in graph.modules.iter().enumerate() {
-            for edge in &module.re_exports {
-                if edge.source_file != source_file {
-                    continue;
-                }
-                let exported_name = if edge.imported_name == source_name {
-                    edge.exported_name.clone()
-                } else if edge.imported_name == "*" && edge.exported_name == "*" {
-                    source_name.clone()
-                } else {
-                    continue;
-                };
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "file count is bounded by project size, well under u32::MAX"
-                )]
-                let barrel_file = FileId(idx as u32);
-                let pair = (barrel_file, exported_name);
-                if reachable.insert(pair.clone()) {
-                    frontier.push(pair);
-                }
-            }
-        }
-    }
-
-    reachable
 }
 
 /// Resolve the file_id of a namespace import on `alias_module` whose local

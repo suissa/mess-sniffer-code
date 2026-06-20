@@ -8,6 +8,7 @@ mod cycles;
 mod namespace_aliases;
 mod namespace_re_exports;
 mod narrowing;
+mod re_export_reachability;
 mod re_exports;
 mod reachability;
 pub mod types;
@@ -234,7 +235,7 @@ impl ModuleGraph {
     }
 
     /// Check if any importer uses `import * as ns` for this module.
-    /// Uses precomputed bitset — O(1) lookup.
+    /// Uses precomputed bitset, O(1) lookup.
     #[must_use]
     pub fn has_namespace_import(&self, file_id: FileId) -> bool {
         let idx = file_id.0 as usize;

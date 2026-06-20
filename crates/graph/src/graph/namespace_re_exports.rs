@@ -41,6 +41,7 @@ use super::narrowing::{
     create_synthetic_exports_for_star_re_exports, mark_all_exports_referenced,
     mark_member_exports_referenced,
 };
+use super::re_export_reachability::enumerate_reachable_barrels;
 use super::types::ReferenceKind;
 
 /// Either credit a specific member on the target, or credit every export
@@ -129,57 +130,6 @@ pub(super) fn propagate_namespace_re_exports(
 fn module_index_for_file(graph: &ModuleGraph, file_id: FileId) -> Option<usize> {
     let idx = file_id.0 as usize;
     (idx < graph.modules.len()).then_some(idx)
-}
-
-/// Walk forward through named re-export edges starting from
-/// `(seed_file, seed_name)` and return every reachable
-/// `(barrel_file_id, exported_name_at_barrel)` pair, including the seed.
-///
-/// Mirrors the named-rename and star-passthrough behavior in
-/// `namespace_aliases::enumerate_alias_reachable_barrels`:
-///
-/// - `export { A as B } from './seed'` yields `(barrel, "B")`.
-/// - `export * from './seed'` propagates the source name unchanged.
-/// - `export * as ns from './seed'` is intentionally NOT followed: at that
-///   barrel the original identifier is hidden behind `ns.<name>` rather than
-///   exposed directly, so the seed name is no longer reachable as itself.
-/// - Cycles are bounded by the `reachable` set used as a visited marker.
-fn enumerate_reachable_barrels(
-    graph: &ModuleGraph,
-    seed_file: FileId,
-    seed_name: &str,
-) -> FxHashSet<(FileId, String)> {
-    let mut reachable: FxHashSet<(FileId, String)> = FxHashSet::default();
-    reachable.insert((seed_file, seed_name.to_string()));
-    let mut frontier: Vec<(FileId, String)> = vec![(seed_file, seed_name.to_string())];
-
-    while let Some((source_file, source_name)) = frontier.pop() {
-        for (idx, module) in graph.modules.iter().enumerate() {
-            for edge in &module.re_exports {
-                if edge.source_file != source_file {
-                    continue;
-                }
-                let exported_name = if edge.imported_name == source_name {
-                    edge.exported_name.clone()
-                } else if edge.imported_name == "*" && edge.exported_name == "*" {
-                    source_name.clone()
-                } else {
-                    continue;
-                };
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "file count is bounded by project size, well under u32::MAX"
-                )]
-                let barrel_file = FileId(idx as u32);
-                let pair = (barrel_file, exported_name);
-                if reachable.insert(pair.clone()) {
-                    frontier.push(pair);
-                }
-            }
-        }
-    }
-
-    reachable
 }
 
 /// For every consumer in `module_by_id` that imports a name reachable from
