@@ -528,23 +528,47 @@ fn unused_export_for_module(
     } else {
         IssueKind::UnusedExport
     };
-    if ctx
-        .suppressions
-        .is_suppressed(module.file_id, line, issue_kind)
-    {
+    if unused_export_suppressed(ctx, module.file_id, line, issue_kind) {
         return None;
     }
 
     let is_re_export = re_export_names.contains(export_str.as_str());
-    Some(UnusedExport {
+    Some(build_unused_export(
+        module,
+        export,
+        export_str,
+        line,
+        col,
+        is_re_export,
+    ))
+}
+
+fn unused_export_suppressed(
+    ctx: &UnusedExportModuleContext<'_>,
+    file_id: FileId,
+    line: u32,
+    issue_kind: IssueKind,
+) -> bool {
+    ctx.suppressions.is_suppressed(file_id, line, issue_kind)
+}
+
+fn build_unused_export(
+    module: &ModuleNode,
+    export: &ExportSymbol,
+    export_name: String,
+    line: u32,
+    col: u32,
+    is_re_export: bool,
+) -> UnusedExport {
+    UnusedExport {
         path: module.path.clone(),
-        export_name: export_str,
+        export_name,
         is_type_only: export.is_type_only,
         line,
         col,
         span_start: export.span.start,
         is_re_export,
-    })
+    }
 }
 
 /// Remove exported type findings when the type is only exported to support
