@@ -34,7 +34,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use fallow_types::extract::ModuleInfo;
 
 use crate::discover::FileId;
-use crate::graph::ModuleGraph;
+use crate::graph::{ModuleGraph, ModuleNode};
 use crate::results::UnusedLoadDataKey;
 use crate::suppress::{IssueKind, SuppressionContext};
 
@@ -96,38 +96,24 @@ pub fn find_unused_load_data_keys(
 
     let mut findings = Vec::new();
     for node in &graph.modules {
-        let Some(producer) = modules.get(node.file_id.0 as usize) else {
-            continue;
-        };
-        if producer.load_return_keys.is_empty() || producer.has_unharvestable_load {
-            continue;
-        }
-        if !is_page_load_producer(&node.path) {
-            continue;
-        }
-        let Some(route_dir) = node.path.parent() else {
+        let Some(candidate) =
+            producer_candidate_for_node(node, modules, &module_indexes, &global_used, root)
+        else {
             continue;
         };
 
-        let Some(route_used) = collect_route_used_keys(
+        let ProducerCandidate {
+            producer,
+            file_id,
+            producer_path,
             route_dir,
-            &node.path,
-            &module_indexes.module_by_path,
-            &global_used,
-        ) else {
-            continue;
-        };
-
-        let Some(&producer_path) = module_indexes.path_by_id.get(&node.file_id) else {
-            continue;
-        };
-        let route_dir_rel = relativize_route_dir(route_dir, root);
-
+            route_used,
+        } = candidate;
         let finding_input = ProducerFindingInput {
             producer,
-            file_id: node.file_id,
+            file_id,
             producer_path,
-            route_dir: route_dir_rel,
+            route_dir,
             route_used: &route_used,
             suppressions,
             line_offsets_by_file,
@@ -139,6 +125,46 @@ pub fn find_unused_load_data_keys(
         findings,
         global_abstain: false,
     }
+}
+
+struct ProducerCandidate<'a> {
+    producer: &'a ModuleInfo,
+    file_id: FileId,
+    producer_path: &'a Path,
+    route_dir: Option<String>,
+    route_used: FxHashSet<&'a str>,
+}
+
+fn producer_candidate_for_node<'a>(
+    node: &ModuleNode,
+    modules: &'a [ModuleInfo],
+    module_indexes: &ModuleIndexes<'a>,
+    global_used: &FxHashSet<&'a str>,
+    root: &Path,
+) -> Option<ProducerCandidate<'a>> {
+    let producer = modules.get(node.file_id.0 as usize)?;
+    if producer.load_return_keys.is_empty() || producer.has_unharvestable_load {
+        return None;
+    }
+    if !is_page_load_producer(&node.path) {
+        return None;
+    }
+    let route_dir = node.path.parent()?;
+    let route_used = collect_route_used_keys(
+        route_dir,
+        &node.path,
+        &module_indexes.module_by_path,
+        global_used,
+    )?;
+    let producer_path = *module_indexes.path_by_id.get(&node.file_id)?;
+
+    Some(ProducerCandidate {
+        producer,
+        file_id: node.file_id,
+        producer_path,
+        route_dir: relativize_route_dir(route_dir, root),
+        route_used,
+    })
 }
 
 fn empty_result() -> LoadDataKeyResult {
