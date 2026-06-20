@@ -218,15 +218,7 @@ struct ClientConeResult {
 /// (no early break) so the dynamic-import blind-spot count reflects every edge,
 /// not just the path to the first finding. Type-only and `next/dynamic
 /// ssr:false`-only edges are excluded (neither can leak into the client bundle).
-fn walk_client_cone(
-    graph: &ModuleGraph,
-    client_id: FileId,
-    modules_by_id: &FxHashMap<FileId, &ModuleInfo>,
-    secret_sources: &FxHashMap<FileId, Vec<String>>,
-    server_only_sources: &FxHashSet<FileId>,
-    client_only_spans: &FxHashMap<FileId, FxHashSet<u32>>,
-    empty_spans: &FxHashSet<u32>,
-) -> ClientConeResult {
+fn walk_client_cone(scan: &LeakScanInput<'_>, client_id: FileId) -> ClientConeResult {
     let mut visited: FxHashSet<FileId> = FxHashSet::default();
     visited.insert(client_id);
     let mut result = ClientConeResult {
@@ -239,26 +231,30 @@ fn walk_client_cone(
     queue.push_back(client_id);
 
     while let Some(current) = queue.pop_front() {
-        if let Some(current_module) = modules_by_id.get(&current)
+        if let Some(current_module) = scan.modules_by_id.get(&current)
             && !current_module.dynamic_import_patterns.is_empty()
         {
             result.had_unresolved_edge = true;
         }
 
         if current != client_id {
-            if result.reached_secret.is_none() && secret_sources.contains_key(&current) {
+            if result.reached_secret.is_none() && scan.secret_sources.contains_key(&current) {
                 result.reached_secret = Some(current);
             }
-            if result.reached_server_only.is_none() && server_only_sources.contains(&current) {
+            if result.reached_server_only.is_none() && scan.server_only_sources.contains(&current) {
                 result.reached_server_only = Some(current);
             }
         }
 
         // Exclude edges reached only through a `next/dynamic ssr:false`
         // dynamic import made by `current` (the client-only escape hatch).
-        let excluded = client_only_spans.get(&current).unwrap_or(empty_spans);
-        for (target, all_type_only, span_start, all_client_only) in
-            graph.outgoing_edge_summaries_with_exclusions(current, excluded)
+        let excluded = scan
+            .client_only_spans
+            .get(&current)
+            .unwrap_or(scan.empty_spans);
+        for (target, all_type_only, span_start, all_client_only) in scan
+            .graph
+            .outgoing_edge_summaries_with_exclusions(current, excluded)
         {
             if all_type_only {
                 continue; // type-only imports are erased at build; cannot leak.
@@ -390,15 +386,7 @@ fn scan_client_file_for_leaks(
     }
 
     // Transitive case: BFS the import cone.
-    let cone = walk_client_cone(
-        scan.graph,
-        client_id,
-        scan.modules_by_id,
-        scan.secret_sources,
-        scan.server_only_sources,
-        scan.client_only_spans,
-        scan.empty_spans,
-    );
+    let cone = walk_client_cone(scan, client_id);
 
     if cone.had_unresolved_edge {
         stats.client_files_with_unresolved_edges += 1;
