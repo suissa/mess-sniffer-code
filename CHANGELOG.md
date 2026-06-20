@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Varlock now activates from a nested `.env.schema`, not just a root-level one.**
+  A project with a `.env.schema` in a subdirectory (for example `apps/web/.env.schema`)
+  and no `varlock` dependency previously left the plugin inactive, so packages declared
+  via `@plugin(...)` inside that schema were reported as unused dependencies. They are
+  now credited. This removes those false positives; expect a small drop in
+  unused-dependency findings for affected projects. Production mode is unchanged
+  (activation there still requires the `varlock` dependency or a root-level
+  `.env.schema`).
+
 ### Changed
 
 - **Faster plugin and config detection on large repositories.** Plugin config files

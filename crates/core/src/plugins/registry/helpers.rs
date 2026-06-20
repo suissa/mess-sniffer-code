@@ -287,6 +287,17 @@ impl ConfigCandidateIndex {
         self.dirs.get(dir).is_some_and(|names| names.contains(name))
     }
 
+    /// Whether any directory at or below `root` contains a file named `name`,
+    /// per the files the discovery walk collected. Lets a plugin activate from
+    /// a sentinel file nested anywhere under `root` (e.g. a `.env.schema` in a
+    /// workspace subdirectory) without a recursive filesystem walk.
+    #[must_use]
+    pub fn any_descendant_contains(&self, root: &Path, name: &OsStr) -> bool {
+        self.dirs
+            .iter()
+            .any(|(dir, names)| dir.starts_with(root) && names.contains(name))
+    }
+
     fn glob_matches_in_dir(&self, dir: &Path, matcher: &globset::GlobMatcher) -> Vec<PathBuf> {
         self.dirs.get(dir).map_or_else(Vec::new, |names| {
             names

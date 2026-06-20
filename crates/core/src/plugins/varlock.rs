@@ -32,11 +32,23 @@ impl Plugin for VarlockPlugin {
         &self,
         deps: &[String],
         root: &Path,
-        discovered_files: &[PathBuf],
-        _candidate_index: Option<&super::registry::ConfigCandidateIndex>,
+        _discovered_files: &[PathBuf],
+        candidate_index: Option<&super::registry::ConfigCandidateIndex>,
     ) -> bool {
-        self.is_enabled_with_deps(deps, root)
-            || discovered_files.iter().any(|path| is_env_schema_path(path))
+        if self.is_enabled_with_deps(deps, root) {
+            return true;
+        }
+
+        // `.env.schema` is a non-source config candidate, so it never appears
+        // in `discovered_files`; the discovery walk routes it to the config
+        // channel. Outside production mode, activate from any `.env.schema` the
+        // walk captured anywhere under `root` (varlock reads nested schemas, not
+        // just the root one). In production (`candidate_index` is `None`) the
+        // root-level `is_file` probe in `is_enabled_with_deps` is the activation
+        // path.
+        candidate_index.is_some_and(|index| {
+            index.any_descendant_contains(root, std::ffi::OsStr::new(".env.schema"))
+        })
     }
 
     fn config_patterns(&self) -> &'static [&'static str] {
@@ -160,11 +172,22 @@ mod tests {
     }
 
     #[test]
-    fn activates_from_discovered_schema_files() {
+    fn activates_from_nested_schema_via_index() {
+        // `.env.schema` is a config candidate, not a source file, so it reaches
+        // the plugin through the discovery index rather than `discovered_files`.
         let plugin = VarlockPlugin;
-        let files = vec![PathBuf::from("/repo/apps/web/.env.schema")];
+        let schema = PathBuf::from("/repo/apps/web/.env.schema");
+        let index = crate::plugins::registry::ConfigCandidateIndex::build(std::iter::once(
+            schema.as_path(),
+        ));
 
-        assert!(plugin.is_enabled_with_files(&[], Path::new("/repo"), &files, None));
+        // Outside production: a nested schema the walk captured activates.
+        assert!(plugin.is_enabled_with_files(&[], Path::new("/repo"), &[], Some(&index)));
+        // Production (`None`): a nested schema does not activate; only the dep
+        // or a root-level `.env.schema` (probed in `is_enabled_with_deps`) does.
+        assert!(!plugin.is_enabled_with_files(&[], Path::new("/repo"), &[], None));
+        // Scoping: a schema under a different root does not activate this root.
+        assert!(!plugin.is_enabled_with_files(&[], Path::new("/other"), &[], Some(&index)));
     }
 
     #[test]
