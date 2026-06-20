@@ -164,69 +164,85 @@ struct PolicyNodeInput<'a> {
 /// findings. Off-master and out-of-scope nodes are skipped.
 fn collect_node_policy_violations(input: &mut PolicyNodeInput<'_>) {
     let node = input.node;
-    if !node.is_reachable() && !node.is_entry_point() {
-        return;
-    }
-    let Ok(relative) = node.path.strip_prefix(&input.config.root) else {
+    let Some(scope) =
+        scoped_policy_rules(node, input.config, input.rules, input.scoped_file_counts)
+    else {
         return;
     };
-    let relative = relative.to_string_lossy().replace('\\', "/");
-
-    let master = input
-        .config
-        .resolve_rules_for_path(&node.path)
-        .policy_violation;
-    if master == Severity::Off {
-        return;
-    }
-
-    let in_scope: Vec<(usize, &CompiledRule<'_>)> = input
-        .rules
-        .iter()
-        .enumerate()
-        .filter(|(_, rule)| rule.applies_to(&relative))
-        .collect();
-    if in_scope.is_empty() {
-        return;
-    }
-    for (index, _) in &in_scope {
-        input.scoped_file_counts[*index] += 1;
-    }
 
     let Some(module) = input.modules_by_id.get(&node.file_id) else {
         return;
     };
 
     collect_banned_imports(&mut PolicyCollectionInput {
-        in_scope: &in_scope,
+        in_scope: &scope.in_scope,
         module,
         node,
-        master,
+        master: scope.master,
         declared_deps: input.declared_deps,
         suppressions: input.suppressions,
         line_offsets_by_file: input.line_offsets_by_file,
         violations: input.violations,
     });
     collect_banned_effects(&mut PolicyCollectionInput {
-        in_scope: &in_scope,
+        in_scope: &scope.in_scope,
         module,
         node,
-        master,
+        master: scope.master,
         declared_deps: input.declared_deps,
         suppressions: input.suppressions,
         line_offsets_by_file: input.line_offsets_by_file,
         violations: input.violations,
     });
     collect_banned_calls(&mut PolicyCollectionInput {
-        in_scope: &in_scope,
+        in_scope: &scope.in_scope,
         module,
         node,
-        master,
+        master: scope.master,
         declared_deps: input.declared_deps,
         suppressions: input.suppressions,
         line_offsets_by_file: input.line_offsets_by_file,
         violations: input.violations,
     });
+}
+
+struct ScopedPolicyRules<'a> {
+    master: Severity,
+    in_scope: Vec<(usize, &'a CompiledRule<'a>)>,
+}
+
+fn scoped_policy_rules<'a>(
+    node: &crate::graph::ModuleNode,
+    config: &ResolvedConfig,
+    rules: &'a [CompiledRule<'a>],
+    scoped_file_counts: &mut [usize],
+) -> Option<ScopedPolicyRules<'a>> {
+    if !node.is_reachable() && !node.is_entry_point() {
+        return None;
+    }
+    let Ok(relative) = node.path.strip_prefix(&config.root) else {
+        return None;
+    };
+    let relative = relative.to_string_lossy().replace('\\', "/");
+
+    let master = config.resolve_rules_for_path(&node.path).policy_violation;
+    if master == Severity::Off {
+        return None;
+    }
+
+    let in_scope: Vec<(usize, &CompiledRule<'_>)> = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| rule.applies_to(&relative))
+        .collect();
+    if in_scope.is_empty() {
+        return None;
+    }
+    for (index, _) in &in_scope {
+        scoped_file_counts[*index] += 1;
+    }
+
+    Some(ScopedPolicyRules { master, in_scope })
 }
 
 /// Compile every loaded pack rule. Rules pinned to `severity: "off"` are
