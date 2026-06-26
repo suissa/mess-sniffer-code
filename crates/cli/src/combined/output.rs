@@ -42,6 +42,22 @@ pub(super) fn print_combined_report(
         return Ok(code);
     }
 
+    if let Some(path) = opts.export_dashboard {
+        export_dashboard_json(
+            CombinedJsonPrintInput {
+                check_result,
+                dupes_result,
+                health_result,
+                root: opts.root,
+                elapsed: total_elapsed,
+                explain: opts.explain,
+                config_fixable: opts.config_path.is_some()
+                    || fallow_config::FallowConfig::find_config_path(opts.root).is_some(),
+            },
+            path,
+        )?;
+    }
+
     Ok(print_human_sections(
         opts,
         check_result,
@@ -420,16 +436,69 @@ struct CombinedJsonPrintInput<'a> {
 }
 
 fn print_combined_json(input: CombinedJsonPrintInput<'_>) -> ExitCode {
+    let output = match build_combined_json_value(input) {
+        Ok(output) => output,
+        Err(code) => return code,
+    };
+
+    match serde_json::to_string_pretty(&output) {
+        Ok(json) => {
+            outln!("{json}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => emit_error(
+            &format!("JSON serialization error: {e}"),
+            2,
+            OutputFormat::Json,
+        ),
+    }
+}
+
+fn export_dashboard_json(
+    input: CombinedJsonPrintInput<'_>,
+    path: &std::path::Path,
+) -> Result<(), ExitCode> {
+    let output = build_combined_json_value(input)?;
+    let json = serde_json::to_string_pretty(&output).map_err(|e| {
+        emit_error(
+            &format!("Dashboard JSON serialization error: {e}"),
+            2,
+            OutputFormat::Human,
+        )
+    })?;
+    std::fs::write(path, json).map_err(|e| {
+        emit_error(
+            &format!("Failed to write dashboard JSON to {}: {e}", path.display()),
+            2,
+            OutputFormat::Human,
+        )
+    })?;
+    if !crate::report::sink::is_redirected() {
+        eprintln!(
+            "{}",
+            format!(
+                "Dashboard JSON exported to {}. Open report-dashboard.html and load this file.",
+                path.display()
+            )
+            .dimmed()
+        );
+    }
+    Ok(())
+}
+
+fn build_combined_json_value(
+    input: CombinedJsonPrintInput<'_>,
+) -> Result<serde_json::Value, ExitCode> {
     let mut combined = match combined_json_root(input.elapsed) {
         Ok(combined) => combined,
-        Err(code) => return code,
+        Err(code) => return Err(code),
     };
     let root_prefix = format!("{}/", input.root.display());
 
     if let Some(result) = input.check_result
         && let Err(code) = insert_combined_check_json(&mut combined, result, input.config_fixable)
     {
-        return code;
+        return Err(code);
     }
 
     let dupes_payload = input
@@ -437,11 +506,11 @@ fn print_combined_json(input: CombinedJsonPrintInput<'_>) -> ExitCode {
         .map(|result| crate::output_dupes::DupesReportPayload::from_report(&result.report));
     if let Err(code) = insert_combined_dupes_json(&mut combined, dupes_payload.as_ref(), input.root)
     {
-        return code;
+        return Err(code);
     }
     if let Err(code) = insert_combined_health_json(&mut combined, input.health_result, &root_prefix)
     {
-        return code;
+        return Err(code);
     }
     if let Err(code) = insert_combined_next_steps(
         &mut combined,
@@ -450,16 +519,16 @@ fn print_combined_json(input: CombinedJsonPrintInput<'_>) -> ExitCode {
         input.health_result,
         input.root,
     ) {
-        return code;
+        return Err(code);
     }
 
-    emit_combined_json_output(
+    Ok(finalize_combined_json_output(
         combined,
         input.check_result,
         input.dupes_result,
         input.health_result,
         input.explain,
-    )
+    ))
 }
 
 #[expect(
@@ -572,13 +641,13 @@ fn insert_combined_next_steps(
     Ok(())
 }
 
-fn emit_combined_json_output(
+fn finalize_combined_json_output(
     combined: serde_json::Map<String, serde_json::Value>,
     check: Option<&CheckResult>,
     dupes: Option<&DupesResult>,
     health: Option<&HealthResult>,
     explain: bool,
-) -> ExitCode {
+) -> serde_json::Value {
     let mut output = serde_json::Value::Object(combined);
     if explain && let serde_json::Value::Object(ref mut map) = output {
         map.insert(
@@ -588,18 +657,7 @@ fn emit_combined_json_output(
     }
     report::harmonize_multi_kind_suppress_line_actions(&mut output);
     crate::output_envelope::attach_telemetry_meta(&mut output);
-
-    match serde_json::to_string_pretty(&output) {
-        Ok(json) => {
-            outln!("{json}");
-            ExitCode::SUCCESS
-        }
-        Err(e) => emit_error(
-            &format!("JSON serialization error: {e}"),
-            2,
-            OutputFormat::Json,
-        ),
-    }
+    output
 }
 
 fn insert_combined_check_json(
@@ -795,9 +853,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        build_combined_codeclimate, combined_json_root, combined_machine_success,
-        emit_combined_json_output, exit_code_to_u8, insert_combined_dupes_json,
-        insert_combined_health_json, print_combined_codeclimate, print_combined_sarif,
+        build_combined_codeclimate, combined_json_root, combined_machine_success, exit_code_to_u8,
+        finalize_combined_json_output, insert_combined_dupes_json, insert_combined_health_json,
+        print_combined_codeclimate, print_combined_sarif,
     };
 
     #[test]
@@ -864,12 +922,10 @@ mod tests {
     }
 
     #[test]
-    fn emit_combined_json_output_can_attach_empty_meta() {
+    fn finalize_combined_json_output_can_attach_empty_meta() {
         let combined = combined_json_root(Duration::ZERO).expect("combined JSON root");
+        let output = finalize_combined_json_output(combined, None, None, None, true);
 
-        assert_eq!(
-            emit_combined_json_output(combined, None, None, None, true),
-            ExitCode::SUCCESS
-        );
+        assert!(output.get("_meta").is_some());
     }
 }

@@ -63,6 +63,9 @@ fn tokenize_file_inner(
     if matches!(ext, "css" | "scss" | "sass" | "less") {
         return tokenize_style_source(source);
     }
+    if matches!(ext, "py" | "rs" | "go" | "zig") {
+        return tokenize_lexical_source(ext, source);
+    }
 
     tokenize_js_ts(path, source, strip_types, skip_imports)
 }
@@ -215,8 +218,12 @@ fn empty_tokens(source: &str) -> FileTokens {
 }
 
 fn tokenize_style_source(source: &str) -> FileTokens {
+    tokenize_lexical_source("style", source)
+}
+
+fn tokenize_lexical_source(namespace: &str, source: &str) -> FileTokens {
     let mut tokens = Vec::with_capacity(source.len().min(64));
-    tokens.push(lexical::boundary_token("style", 0));
+    tokens.push(lexical::boundary_token(namespace, 0));
     tokens.extend(lexical::tokenize_lexical_region(source, 0));
     FileTokens {
         tokens,

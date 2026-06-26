@@ -28,6 +28,7 @@ pub struct CombinedOptions<'a> {
     pub quiet: bool,
     pub fail_on_issues: bool,
     pub sarif_file: Option<&'a std::path::Path>,
+    pub export_dashboard: Option<&'a std::path::Path>,
     pub changed_since: Option<&'a str>,
     /// Import churn from a `fallow-churn/v1` file (`--churn-file`) for the
     /// health hotspots / ownership pass instead of `git log`. Resolved relative

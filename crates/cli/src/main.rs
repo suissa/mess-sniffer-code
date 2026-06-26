@@ -332,6 +332,11 @@ struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     sarif_file: Option<PathBuf>,
 
+    /// Export bare combined analysis as dashboard JSON for report-dashboard.html.
+    /// Example: fallow --export-dashboard fallow-dashboard.json
+    #[arg(long, value_name = "PATH")]
+    export_dashboard: Option<PathBuf>,
+
     /// Write the report to a file instead of stdout, for any --format (no ANSI
     /// codes). Useful on large projects where the terminal scrollback truncates
     /// the top. Progress and the confirmation stay on stderr.
@@ -3358,6 +3363,7 @@ fn run_bare_combined(
         quiet,
         fail_on_issues,
         sarif_file: cli.sarif_file.as_deref(),
+        export_dashboard: cli.export_dashboard.as_deref(),
         changed_since: cli.changed_since.as_deref(),
         churn_file: cli.churn_file.as_deref(),
         baseline: cli.baseline.as_deref(),
@@ -5525,6 +5531,16 @@ mod tests {
     /// the version prints regardless of which spelling the user reaches for
     /// (issue #916). clap surfaces a Version action from `try_get_matches_from`
     /// as the `DisplayVersion` error kind.
+    #[test]
+    fn export_dashboard_flag_parses_path() {
+        let cli = Cli::try_parse_from(["fallow", "--export-dashboard", "fallow-dashboard.json"])
+            .expect("export dashboard flag parses");
+        assert_eq!(
+            cli.export_dashboard.as_deref(),
+            Some(Path::new("fallow-dashboard.json"))
+        );
+    }
+
     #[test]
     fn version_flag_accepts_lower_v_upper_v_and_long() {
         use clap::CommandFactory;

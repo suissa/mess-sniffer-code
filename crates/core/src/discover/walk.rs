@@ -416,7 +416,7 @@ impl<'s> ignore::ParallelVisitorBuilder<'s> for FileVisitorBuilder<'s> {
 
 pub const SOURCE_EXTENSIONS: &[&str] = &[
     "ts", "tsx", "mts", "cts", "gts", "js", "jsx", "mjs", "cjs", "gjs", "vue", "svelte", "astro",
-    "mdx", "css", "scss", "sass", "less", "html", "graphql", "gql",
+    "mdx", "css", "scss", "sass", "less", "html", "graphql", "gql", "py", "rs", "go", "zig",
 ];
 
 /// Glob patterns for test/dev/story files excluded in production mode.
@@ -825,6 +825,14 @@ mod tests {
     #[test]
     fn source_extensions_include_mdx() {
         assert!(SOURCE_EXTENSIONS.contains(&"mdx"));
+    }
+
+    #[test]
+    fn source_extensions_include_general_purpose_languages() {
+        assert!(SOURCE_EXTENSIONS.contains(&"py"));
+        assert!(SOURCE_EXTENSIONS.contains(&"rs"));
+        assert!(SOURCE_EXTENSIONS.contains(&"go"));
+        assert!(SOURCE_EXTENSIONS.contains(&"zig"));
     }
 
     #[test]
