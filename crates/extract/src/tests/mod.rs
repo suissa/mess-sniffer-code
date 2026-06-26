@@ -567,3 +567,28 @@ fn glimmer_file_without_template_still_flags_unused_imports() {
     );
     assert_unused(&info, &["unused"]);
 }
+
+#[test]
+fn parses_general_purpose_languages_as_non_js_modules() {
+    for path in ["main.py", "lib.rs", "main.go", "main.zig"] {
+        let info = parse_source_to_module(
+            FileId(0),
+            Path::new(path),
+            "// fallow-ignore-file complexity\nfn score() { return 1; }\n",
+            0,
+            true,
+        );
+        assert!(
+            info.imports.is_empty(),
+            "{path} should not synthesize JS imports"
+        );
+        assert!(
+            info.exports.is_empty(),
+            "{path} should not synthesize JS exports"
+        );
+        assert_eq!(
+            info.line_offsets[0], 0,
+            "{path} should keep source line offsets"
+        );
+    }
+}

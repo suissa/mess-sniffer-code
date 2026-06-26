@@ -14,6 +14,7 @@ use crate::glimmer::{is_glimmer_file, strip_glimmer_templates};
 use crate::graphql::{is_graphql_file, parse_graphql_to_module};
 use crate::html::{is_html_file, parse_html_to_module_with_complexity};
 use crate::mdx::{is_mdx_file, parse_mdx_to_module};
+use crate::module_info::non_js_module_info;
 use crate::sfc::{is_sfc_file, parse_sfc_to_module};
 use crate::visitor::ModuleInfoExtractor;
 use fallow_types::discover::FileId;
@@ -416,7 +417,24 @@ fn parse_non_js_source_to_module(
             need_complexity,
         ));
     }
+    if is_general_purpose_source_file(path) {
+        return Some(non_js_module_info(
+            file_id,
+            content_hash,
+            source,
+            crate::suppress::parse_suppressions_from_source(source),
+            Vec::new(),
+            Vec::new(),
+        ));
+    }
     None
+}
+
+fn is_general_purpose_source_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("py" | "rs" | "go" | "zig")
+    )
 }
 
 /// Scan Glimmer `<template>...</template>` blocks in a `.gts` / `.gjs` file

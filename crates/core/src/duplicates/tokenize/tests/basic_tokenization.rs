@@ -429,3 +429,21 @@ fn tokenize_no_extension_uses_default_source_type() {
     let result = tokenize_file(&path, "const x = 1;", false);
     assert!(result.line_count >= 1);
 }
+
+#[test]
+fn tokenize_general_purpose_languages_lexically() {
+    for (file_name, source) in [
+        ("main.py", "def score(value):\n    return value + 1\n"),
+        ("lib.rs", "fn score(value: i32) -> i32 { value + 1 }"),
+        ("main.go", "func score(value int) int { return value + 1 }"),
+        ("main.zig", "fn score(value: i32) i32 { return value + 1; }"),
+    ] {
+        let path = std::path::Path::new(file_name);
+        let file = crate::duplicates::tokenize::tokenize_file(path, source, false);
+        assert!(
+            file.tokens.len() >= 8,
+            "{file_name} should produce lexical duplicate-analysis tokens, got {:?}",
+            file.tokens
+        );
+    }
+}

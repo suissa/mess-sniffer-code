@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fallow Report Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" />
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    :root{color-scheme:light;--bg:#f6f8fb;--panel:#fff;--muted:#667085;--text:#101828;--line:#e4e7ec;--brand:#635bff;--brand2:#13b5c8;--ok:#12b76a;--warn:#f79009;--bad:#f04438;--shadow:0 18px 50px rgba(16,24,40,.12)}
+    [data-theme="dark"]{color-scheme:dark;--bg:#0b1020;--panel:#11182b;--muted:#98a2b3;--text:#f2f4f7;--line:#25304a;--brand:#8b7cff;--brand2:#22d3ee;--shadow:0 24px 60px rgba(0,0,0,.35)}
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,system-ui,sans-serif;background:radial-gradient(circle at top left,rgba(99,91,255,.18),transparent 34rem),var(--bg);color:var(--text)}
+    .wrap{max-width:1220px;margin:auto;padding:32px}.hero{display:grid;grid-template-columns:1.3fr .7fr;gap:22px;align-items:stretch}.card{background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--line);border-radius:24px;box-shadow:var(--shadow);padding:24px}.title{font-size:clamp(2rem,5vw,4.4rem);line-height:.95;margin:0;font-weight:800;letter-spacing:-.06em}.grad{background:linear-gradient(135deg,var(--brand),var(--brand2));-webkit-background-clip:text;color:transparent}.muted{color:var(--muted)}
+    .toolbar{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}.btn{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:14px;padding:11px 14px;font-weight:700;cursor:pointer;display:inline-flex;gap:8px;align-items:center}.btn.primary{background:linear-gradient(135deg,var(--brand),var(--brand2));color:white;border:0}.file{position:relative;overflow:hidden}.file input{position:absolute;inset:0;opacity:0;cursor:pointer}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:22px 0}.metric{padding:20px;border-radius:20px;background:var(--panel);border:1px solid var(--line)}.metric b{font-size:2rem}.metric span{display:block;color:var(--muted);font-weight:600;margin-top:4px}.section{margin-top:22px}.section h2{display:flex;gap:10px;align-items:center;margin:0 0 14px}.table{width:100%;border-collapse:collapse;overflow:hidden;border-radius:18px}.table th,.table td{padding:13px 14px;border-bottom:1px solid var(--line);text-align:left}.table th{font-size:.78rem;text-transform:uppercase;color:var(--muted);letter-spacing:.08em}.pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 10px;font-size:.78rem;font-weight:800}.pill.bad{background:color-mix(in srgb,var(--bad) 16%,transparent);color:var(--bad)}.pill.warn{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}.pill.ok{background:color-mix(in srgb,var(--ok) 16%,transparent);color:var(--ok)}
+    .list{display:grid;gap:12px}.issue{border:1px solid var(--line);border-radius:18px;padding:16px;background:var(--panel)}.issue h3{margin:0 0 8px;font-size:1rem}.issue code{color:var(--brand2)}.empty{padding:34px;text-align:center;color:var(--muted)}.footer{margin:28px 0 0;color:var(--muted);font-size:.9rem}@media(max-width:900px){.hero,.grid{grid-template-columns:1fr}.wrap{padding:18px}.title{font-size:2.6rem}}
+  </style>
+</head>
+<body data-theme="light">
+  <main class="wrap">
+    <section class="hero animate__animated animate__fadeIn">
+      <div class="card">
+        <p class="muted"><i data-lucide="bar-chart-3"></i> Fallow dashboard</p>
+        <h1 class="title">Relatório <span class="grad">profissional</span> de análise</h1>
+        <p class="muted">Execute <code>fallow --export-dashboard fallow-dashboard.json</code> e carregue o JSON aqui.</p>
+        <div class="toolbar"><label class="btn primary file"><i data-lucide="upload"></i> Carregar JSON<input id="file" type="file" accept="application/json,.json"></label><button id="theme" class="btn"><i data-lucide="moon"></i> Tema</button></div>
+      </div>
+      <div class="card"><h2>Status</h2><p id="status" class="muted">Nenhum relatório carregado.</p><p class="muted">Compatível com o JSON combinado exportado pelo Fallow.</p></div>
+    </section>
+    <section class="grid" id="metrics"></section>
+    <section class="card section"><h2><i data-lucide="activity"></i> Resumo por categoria</h2><div id="summary"></div></section>
+    <section class="card section"><h2><i data-lucide="alert-triangle"></i> Principais achados</h2><div id="issues" class="list empty">Carregue um arquivo JSON para visualizar os achados.</div></section>
+    <p class="footer">Dica: mantenha este HTML versionado no repositório e anexe o JSON em artefatos de CI.</p>
+  </main>
+<script>
+const $=id=>document.getElementById(id); const state={data:null};
+$('theme').onclick=()=>{document.body.dataset.theme=document.body.dataset.theme==='dark'?'light':'dark'; lucide.createIcons()};
+$('file').onchange=async e=>{const f=e.target.files[0]; if(!f)return; state.data=JSON.parse(await f.text()); render(state.data,f.name)};
+function count(x){return Array.isArray(x)?x.length:0} function arr(...xs){return xs.flatMap(x=>Array.isArray(x)?x:[])}
+function issueRows(d){const check=d.check||{}, health=d.health||{}, dupes=d.dupes||{}; return arr(check.issues,check.unused_files,check.unused_exports,check.unresolved_imports,health.findings,(dupes.clone_groups||[]).map(g=>({category:'code-duplication',message:`Grupo duplicado com ${count(g.instances)} ocorrências`,path:g.instances?.[0]?.file||''})))}
+function render(d,name){const issues=issueRows(d); const summary={DeadCode:count(d.check?.issues)+count(d.check?.unused_files)+count(d.check?.unused_exports),Duplication:count(d.dupes?.clone_groups),Health:count(d.health?.findings),NextSteps:count(d.next_steps)}; $('status').innerHTML=`<b>${name}</b><br><span class="muted">Versão ${d.version||'n/a'} · ${d.elapsed_ms||0}ms</span>`; $('metrics').innerHTML=metric('Achados',issues.length,'alert-circle')+metric('Duplicações',summary.Duplication,'copy')+metric('Health score',d.health?.score?.score??'—','heart-pulse')+metric('Próximos passos',summary.NextSteps,'sparkles'); $('summary').innerHTML=table(Object.entries(summary).map(([k,v])=>`<tr><td>${k}</td><td><span class="pill ${v?'warn':'ok'}">${v}</span></td></tr>`)); $('issues').className='list'; $('issues').innerHTML=issues.length?issues.slice(0,80).map(issue).join(''):'<div class="empty">Nenhum achado encontrado.</div>'; lucide.createIcons()}
+function metric(label,value,icon){return `<div class="metric animate__animated animate__fadeInUp"><i data-lucide="${icon}"></i><b>${value}</b><span>${label}</span></div>`}
+function table(rows){return `<table class="table"><thead><tr><th>Categoria</th><th>Total</th></tr></thead><tbody>${rows.join('')}</tbody></table>`}
+function issue(i){const cat=i.category||i.rule_id||i.kind||'finding', path=i.path||i.file||i.location?.path||'', line=i.line||i.location?.line||''; return `<article class="issue"><h3>${escapeHtml(cat)} <span class="pill bad">review</span></h3><p>${escapeHtml(i.message||i.description||i.name||'Achado de análise')}</p><p class="muted"><code>${escapeHtml(path)}${line?':'+line:''}</code></p></article>`}
+function escapeHtml(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+lucide.createIcons();
+</script>
+</body>
+</html>
